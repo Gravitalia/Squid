@@ -15,6 +15,8 @@ opt-level = 0
 debug = true
 
 [dependencies]
+reqwest = "0.11.13"
+
 tonic = { version = "0.8.3", features = [ "tls", "gzip" ] }
 tokio = { version = "1.23.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net" ] }
 futures = { version = "0.3.25", default-features = false, features = [ "alloc" ] }
