@@ -42,8 +42,8 @@ message SquidReply {
 
 // Define how is the items
 message SquidItem {
-  string message = 1;
-  bool error = 2;
+  int32 rank = 1;
+  string word = 2;
 }
 
 // The reponse for a basic message
