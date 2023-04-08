@@ -32,6 +32,7 @@ message SquidRequest {
 message SquidMessage {
   string message = 1;
   bool error = 2;
+  optional string lang = 3;
 }
 
 message SquidGetRequest {}
@@ -39,6 +40,7 @@ message SquidGetRequest {}
 message SquidItem {
   int32 rank = 1;
   string word = 2;
+  string lang = 3;
 }
 
 message SquidReply {
