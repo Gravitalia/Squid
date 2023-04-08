@@ -3,16 +3,10 @@ use tonic::{transport::Server, Request, Response, Status};
 use squid::squid_server::{Squid, SquidServer};
 use squid::{SquidIndexRequest, SquidIndexReply, SquidGetRequest, SquidGetReply};
 
-use hyper::{Client, client::{HttpConnector, connect::dns::GaiResolver}, Body};
-use hyper_tls::HttpsConnector;
-
 pub mod squid {
     tonic::include_proto!("squid");
 }
-
-pub struct Builder {
-    client: Client<hyper_tls::HttpsConnector<HttpConnector<GaiResolver>>, Body>
-}
+pub struct Builder {}
 
 #[tonic::async_trait]
 impl Squid for Builder {
@@ -45,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Server listening on {}", addr);
     Server::builder()
-        .add_service(SquidServer::new(Builder { client: Client::builder().build::<_, hyper::Body>(HttpsConnector::new()) }))
+        .add_service(SquidServer::new(Builder {}))
         .serve(addr)
         .await?;
 
