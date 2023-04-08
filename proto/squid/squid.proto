@@ -20,29 +20,34 @@ option java_outer_classname = "SquidProto";
 
 package squid;
 
+// Define Squid service
 service Squid {
-  rpc SquidIndex (SquidRequest) returns (SquidMessage) {}
-  rpc SquidGet (SquidGetRequest) returns (SquidReply) {}
+    // Handle indexing query
+    rpc SquidIndex (SquidIndexRequest) returns (SquidIndexReply) {}
+    // Handle get query
+    rpc SquidGet (SquidGetRequest) returns (SquidGetReply) {}
 }
 
-message SquidRequest {
-  string message = 1;
+message SquidIndexRequest {
+    string message = 1;
+}
+  
+message SquidIndexReply {
+    string message = 1;
+    bool error = 2;
 }
 
-message SquidMessage {
-  string message = 1;
-  bool error = 2;
-  optional string lang = 3;
+message SquidGetRequest {
+    string name = 1;
+    //optional string lang = 2;
 }
-
-message SquidGetRequest {}
 
 message SquidItem {
-  int32 rank = 1;
-  string word = 2;
-  string lang = 3;
+    int32 rank = 1;
+    string word = 2;
+    string lang = 3;
 }
 
-message SquidReply {
-  repeated SquidItem items = 1;
+message SquidGetReply {
+    repeated SquidItem items = 1;
 }
