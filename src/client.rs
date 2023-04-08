@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use squid::squid_client::SquidClient;
-use squid::SquidRequest;
+use squid::{SquidIndexRequest, SquidGetRequest};
 
 pub mod squid {
     tonic::include_proto!("squid");
@@ -10,7 +10,7 @@ pub mod squid {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = SquidClient::connect("http://[::1]:50051").await?;
 
-    let request = tonic::Request::new(SquidRequest {
+    let request = tonic::Request::new(SquidIndexRequest {
         message: "This a #Gravitalia test!".into()
     });
 
