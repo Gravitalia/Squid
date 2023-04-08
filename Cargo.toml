@@ -3,6 +3,14 @@ name = "squid"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
 [profile.release]
 opt-level = 3
 lto = true
@@ -15,12 +23,17 @@ opt-level = 0
 debug = true
 
 [dependencies]
-reqwest = "0.11.13"
+hyper = { version = "0.14.25", features = [ "full" ] }
+hyper-tls = "0.5.0"
 
-tonic = { version = "0.8.3", features = [ "tls", "gzip" ] }
-tokio = { version = "1.23.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net" ] }
-futures = { version = "0.3.25", default-features = false, features = [ "alloc" ] }
-rayon = "1.6.1"
+tonic = { version = "0.9.1", features = [ "tls", "gzip" ] }
+tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net" ] }
 
-dotenv = "0.15.0"
-serde = "1.0.151"
+prost = "0.11.8"
+prost-types = "0.11.8"
+serde = "1.0.159"
+reqwest = "0.11.16"
+serde_yaml = "0.9.21"
+
+[build-dependencies]
+tonic-build = { version = "0.9.1", features = [ "prost" ] }
