@@ -20,34 +20,27 @@ option java_outer_classname = "SquidProto";
 
 package squid;
 
-// The crawler service definition.
 service Squid {
-  // Sends a request for index a message
   rpc SquidIndex (SquidRequest) returns (SquidMessage) {}
   rpc SquidGet (SquidGetRequest) returns (SquidReply) {}
 }
 
-// The request message containing the message/description
 message SquidRequest {
   string message = 1;
 }
 
-// The get request
-message SquidGetRequest {}
-
-// The response for the get request
-message SquidReply {
-  repeated SquidItem items = 1;
+message SquidMessage {
+  string message = 1;
+  bool error = 2;
 }
 
-// Define how is the items
+message SquidGetRequest {}
+
 message SquidItem {
   int32 rank = 1;
   string word = 2;
 }
 
-// The reponse for a basic message
-message SquidMessage {
-  string message = 1;
-  bool error = 2;
+message SquidReply {
+  repeated SquidItem items = 1;
 }
