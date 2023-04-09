@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = config::read();
 
     let jetty_home = solr::properties().await?.system_properties.jetty_home;
-    helpers::copy_dir("./configset", &*format!("{}/solr/configsets/squid/conf", jetty_home))?;
+    helpers::copy_dir("./configset", &format!("{}/solr/configsets/squid/conf", jetty_home))?;
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     for service in config.services {

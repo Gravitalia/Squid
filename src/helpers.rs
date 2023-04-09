@@ -18,9 +18,9 @@ pub fn copy_dir(src: &str, dst: &str) -> io::Result<()> {
         let dst_path = format!("{}/{}", dst, file_name);
 
         if file_name == "lang" {
-            copy_dir(&path.to_str().unwrap(), &format!("{}/lang", dst))?;
+            copy_dir(path.to_str().unwrap(), &format!("{}/lang", dst))?;
         } else {
-            copy_file(&path.to_str().unwrap(), &dst_path)?;
+            copy_file(path.to_str().unwrap(), &dst_path)?;
         }
     }
 
