@@ -29,7 +29,8 @@ service Squid {
 }
 
 message SquidIndexRequest {
-    string message = 1;
+    string service = 1;
+    string message = 2;
 }
   
 message SquidIndexReply {
@@ -38,7 +39,7 @@ message SquidIndexReply {
 }
 
 message SquidGetRequest {
-    string name = 1;
+    string service = 1;
     //optional string lang = 2;
 }
 
