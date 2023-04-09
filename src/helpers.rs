@@ -17,10 +17,10 @@ pub fn copy_dir(src: &str, dst: &str) -> io::Result<()> {
         let file_name = path.file_name().unwrap().to_str().unwrap();
         let dst_path = format!("{}/{}", dst, file_name);
 
-        if entry.metadata()?.is_dir() {
-            copy_dir(&path.to_str().unwrap(), &dst_path)?;
+        if file_name == "lang" {
+            copy_dir(path.to_str().unwrap(), &format!("{}/lang", dst))?;
         } else {
-            copy_file(&path.to_str().unwrap(), &dst_path)?;
+            copy_file(path.to_str().unwrap(), &dst_path)?;
         }
     }
 
