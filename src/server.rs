@@ -5,6 +5,7 @@ use squid::{SquidIndexRequest, SquidIndexReply, SquidGetRequest, SquidGetReply};
 
 mod helpers;
 mod config;
+mod solr;
 
 pub mod squid {
     tonic::include_proto!("squid");
@@ -37,7 +38,15 @@ impl Squid for Builder {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _config = config::read();
+    let config = config::read();
+
+    let jetty_home = solr::properties().await?.system_properties.jetty_home;
+    helpers::copy_dir("./configset", &*format!("{}/solr/configsets/squid/conf", jetty_home))?;
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    for service in config.services {
+        solr::core::create(service.name).await?;
+    }
 
     let addr = "[::1]:50051".parse().unwrap();
     println!("Server listening on {}", addr);
