@@ -1,0 +1,8 @@
+update_frequency_sec: 900 # in seconds
+
+services:
+  - name: gravitalia # collection name
+    max_words: 5 # maximum words output, max. value: 255
+    message_type: all # word, hashtag or all
+    lang: global # global or ISO 639-1
+    exclude: [] # words or hashtags to exclude in search
