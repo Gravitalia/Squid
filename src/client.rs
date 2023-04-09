@@ -11,6 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = SquidClient::connect("http://[::1]:50051").await?;
 
     let request = tonic::Request::new(SquidIndexRequest {
+        service: "gravitalia".to_string(),
         message: "This a #Gravitalia test!".into()
     });
 
