@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use squid::squid_client::SquidClient;
-use squid::{SquidIndexRequest, SquidGetRequest};
+use squid::SquidIndexRequest;
 
 pub mod squid {
     tonic::include_proto!("squid");
