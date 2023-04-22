@@ -1,4 +1,5 @@
 pub mod core;
+pub mod document;
 
 use serde::Deserialize;
 use anyhow::Result;
