@@ -4,6 +4,7 @@ use squid::squid_server::{Squid, SquidServer};
 use squid::{SquidIndexRequest, SquidIndexReply, SquidGetRequest, SquidGetReply};
 
 mod helpers;
+mod models;
 mod config;
 mod solr;
 
@@ -47,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for service in config.services {
         solr::core::create(service.name).await?;
     }
-
+    
     let addr = "[::1]:50051".parse().unwrap();
     println!("Server listening on {}", addr);
     Server::builder()
