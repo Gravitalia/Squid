@@ -6,10 +6,6 @@ description.workspace = true
 readme.workspace = true
 edition.workspace = true
 
-#[[bin]]
-#name = "client"
-#path = "src/client.rs"
-
 [[example]]
 name = "client"
 
