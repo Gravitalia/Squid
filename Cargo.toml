@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "benchmarks",
+    "squid",
+    "squid-db",
+]
+
+[workspace.package]
+version = "0.0.1"
+description = ""
+readme = "README.md"
+edition = "2021"
+license = "Apache-2.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+
+[profile.dev]
+opt-level = "z"
+debug = true
