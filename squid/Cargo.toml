@@ -1,0 +1,12 @@
+[package]
+name = "squid"
+
+version.workspace = true
+description.workspace = true
+readme.workspace = true
+edition.workspace = true
+
+[dependencies]
+rmp = "0.8"
+
+squid-db = { path = "../squid-db" }

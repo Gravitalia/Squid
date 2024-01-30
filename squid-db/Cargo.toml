@@ -1,0 +1,11 @@
+[package]
+name = "squid-db"
+
+version.workspace = true
+description.workspace = true
+readme.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = "1"
+bincode = "1"
