@@ -6,7 +6,18 @@ description.workspace = true
 readme.workspace = true
 edition.workspace = true
 
+#[[bin]]
+#name = "client"
+#path = "src/client.rs"
+
+[[example]]
+name = "client"
+
 [dependencies]
+zmq = "0"
 rmp = "0.8"
+
+fern = "0.6"
+log = "0.4"
 
 squid-db = { path = "../squid-db" }
