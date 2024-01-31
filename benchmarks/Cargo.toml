@@ -8,6 +8,7 @@ edition.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
+squid = { path = "../squid" }
 
 [[bench]]
 name = "tokenize"
