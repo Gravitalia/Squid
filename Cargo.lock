@@ -40,6 +40,7 @@ name = "benchmarks"
 version = "0.0.1"
 dependencies = [
  "criterion",
+ "squid",
 ]
 
 [[package]]
@@ -555,6 +556,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp-serde"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bffea85eea980d8a74453e5d02a8d93028f3c34725de143085a844ebe953258a"
+dependencies = [
+ "byteorder",
+ "rmp",
+ "serde",
+]
+
+[[package]]
 name = "rustix"
 version = "0.38.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -632,9 +644,12 @@ checksum = "e6ecd384b10a64542d77071bd64bd7b231f4ed5940fba55e98c3de13824cf3d7"
 name = "squid"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "fern",
  "log",
- "rmp",
+ "rmp-serde",
+ "serde",
+ "serde_derive",
  "squid-db",
  "zmq",
 ]
