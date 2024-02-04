@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use squid::helpers::tokenizer::tokenize;
+use squid_tokenizer::tokenize;
 
 fn tokenize_benchmark(c: &mut Criterion) {
     const FRENCH: &str =
