@@ -21,3 +21,4 @@ fern = "0.6"
 log = "0.4"
 
 squid-db = { path = "../squid-db" }
+squid-tokenizer = { path = "../squid-tokenizer" }
