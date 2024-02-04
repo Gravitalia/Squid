@@ -4,6 +4,7 @@ members = [
     "benchmarks",
     "squid",
     "squid-db",
+    "squid-tokenizer"
 ]
 
 [workspace.package]

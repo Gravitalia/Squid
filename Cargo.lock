@@ -40,7 +40,7 @@ name = "benchmarks"
 version = "0.0.1"
 dependencies = [
  "criterion",
- "squid",
+ "squid-tokenizer",
 ]
 
 [[package]]
@@ -651,6 +651,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "squid-db",
+ "squid-tokenizer",
  "zmq",
 ]
 
@@ -660,6 +661,13 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bincode",
+]
+
+[[package]]
+name = "squid-tokenizer"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
