@@ -1,4 +1,13 @@
+#![forbid(unsafe_code)]
+
 mod helpers;
+mod models;
+
+#[macro_use]
+extern crate serde_derive;
+use rmp_serde::Serializer;
+use serde::Serialize;
+use smallvec::smallvec;
 
 fn main() {
     // Set logger with Fern.
@@ -35,8 +44,25 @@ fn main() {
 
     let mut msg = zmq::Message::new();
     loop {
+        let mut buf = Vec::new();
+        let val = models::query::Leaderboard {
+            words: smallvec![
+                models::query::Word {
+                    word: "hinome",
+                    occurrence: 0,
+                },
+                models::query::Word {
+                    word: "#gravitalia",
+                    occurrence: 0,
+                },
+            ],
+        };
+        val.serialize(&mut Serializer::new(&mut buf)).unwrap();
+
+        println!("{:?}", buf);
+
         responder.recv(&mut msg, 0).unwrap();
         println!("Received {}", msg.as_str().unwrap());
-        responder.send("World", 0).unwrap();
+        responder.send(buf, 0).unwrap();
     }
 }
