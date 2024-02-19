@@ -1,3 +1,4 @@
+use serde::Serialize;
 use smallvec::SmallVec;
 
 /// Answer with a ranking of the most frequently used words.
