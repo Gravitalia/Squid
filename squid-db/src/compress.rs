@@ -6,18 +6,16 @@ use std::{
 };
 
 /// Compresses data using `lz4`.
-pub fn compress(mut source: &[u8]) -> Result<()> {
-    let output_file = File::create(SOURCE_FILE)?;
-
+pub fn compress(mut source: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = EncoderBuilder::new()
         .level(3)
         .favor_dec_speed(true)
-        .build(output_file)?;
+        .build(Vec::new())?;
     io::copy(&mut source, &mut encoder)?;
 
-    let (_, result) = encoder.finish();
+    let (buffer, _) = encoder.finish();
 
-    result
+    Ok(buffer)
 }
 
 /// Decompress data using `lz4`.
