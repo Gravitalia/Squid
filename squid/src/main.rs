@@ -3,8 +3,6 @@
 mod helpers;
 mod models;
 
-#[macro_use]
-extern crate serde_derive;
 use rmp_serde::Serializer;
 use serde::Serialize;
 use smallvec::smallvec;
