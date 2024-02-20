@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt,
-    fs::{write, OpenOptions},
+    fs::{File, OpenOptions},
     io::Read,
 };
 
@@ -52,54 +52,114 @@ impl Error for DbError {}
 
 /// Structure representing the database world.
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct World<T>(Vec<T>)
+pub struct World<T>(pub Vec<T>)
 where
     T: serde::Serialize;
 
-/// Add a new entry to the database.
-///
-/// # Examples
-/// ```rust
-/// use serde::{Deserialize, Serialize};
-/// use squid_db::set;
-///
-/// #[derive(Serialize, Deserialize, PartialEq, Debug)]
-/// struct Entity {
-///     data: String,
-/// }
-///
-/// let mut new_data = Entity { data: "I really like my classmate, Julien".to_string() };
-/// set(new_data);
-///
-/// new_data = Entity { data: "But I do not speak to Julien".to_string() };
-/// set(new_data);
-/// ```
-pub fn set<T>(data: T) -> Result<(), DbError>
+/// Structure representing one instance of the database.
+#[derive(Debug)]
+pub struct Instance<T: serde::Serialize> {
+    // file: File,
+    /// The data in the file represented in the memory.
+    pub data: World<T>,
+}
+
+impl<T> Instance<T>
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
-    let mut world: World<T> = load()?;
-    world.0.insert(0, data);
+    /// Create a new database instance.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use serde::{Deserialize, Serialize};
+    /// use squid_db::Instance;
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct Entity {
+    ///     data: String,
+    /// }
+    ///
+    /// let instance: Instance<Entity> = Instance::new().unwrap();
+    /// //... then you can do enything with the instance.
+    /// ```
+    pub fn new() -> Result<Self, DbError> {
+        let loaded_file = load()?;
 
-    let encoded: Vec<u8> =
-        bincode::serialize(&world).map_err(|_| DbError::FailedSerialization)?;
+        Ok(Self {
+            // file: loaded_file.0,
+            data: loaded_file.1,
+        })
+    }
 
-    #[cfg(feature = "compress")]
-    compress::compress(&encoded).map_err(|_| DbError::FailedCompression)?;
-    #[cfg(not(feature = "compress"))]
-    save(&encoded)?;
+    /// Add a new entry to the database.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use serde::{Deserialize, Serialize};
+    /// use squid_db::Instance;
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct Entity {
+    ///     data: String,
+    ///     love_him: bool,
+    /// }
+    ///
+    /// let mut instance: Instance<Entity> = Instance::new().unwrap();
+    ///
+    /// instance.set(Entity {
+    ///     data: "I really like my classmate, Julien".to_string(),
+    ///     love_him: false,
+    /// });
+    ///
+    /// instance.set(Entity {
+    ///     data: "But I do not speak to Julien".to_string(),
+    ///     love_him: true,
+    /// });
+    /// ```
+    pub fn set(&mut self, data: T) -> Result<(), DbError> {
+        self.data.0.insert(0, data);
 
-    Ok(())
+        #[cfg(feature = "compress")]
+        let encoded = compress::compress(
+            &bincode::serialize(&self.data.0)
+                .map_err(|_| DbError::FailedSerialization)?,
+        )
+        .map_err(|_| DbError::FailedCompression)?;
+
+        #[cfg(not(feature = "compress"))]
+        let encoded = bincode::serialize(&self.data.0)
+            .map_err(|_| DbError::FailedSerialization)?;
+
+        self.save(&encoded)?;
+
+        Ok(())
+    }
+
+    /// Save data in a file.
+    #[inline(always)]
+    fn save(&mut self, buf: &[u8]) -> Result<(), DbError> {
+        // It seems that data is saved both times here.
+        // I mean, new datas are saved while old kept also, so there are two datas.
+        // And again, and again...
+        /*self.file.write_all(buf).map_err(|_| DbError::Unspecified)?;
+        self.file.flush().map_err(|_| DbError::Unspecified)?;*/
+
+        std::fs::write(SOURCE_FILE, buf).map_err(|_| DbError::Unspecified)?;
+        Ok(())
+    }
 }
 
 /// Loads data from the file.
-fn load<T>() -> Result<World<T>, DbError>
+#[inline(always)]
+fn load<T>() -> Result<(File, World<T>), DbError>
 where
     T: serde::de::DeserializeOwned + serde::Serialize,
 {
     let mut file = OpenOptions::new()
         .read(true)
-        .write(true)
+        .write(false)
+        //.append(true)
         .create(true)
         .open(SOURCE_FILE)
         .map_err(|_| DbError::Unspecified)?;
@@ -109,26 +169,19 @@ where
         .map_err(|_| DbError::FailedReading)?;
 
     if buffer.is_empty() {
-        Ok(World(vec![]))
+        Ok((file, World(vec![])))
     } else {
         #[cfg(feature = "compress")]
         let result = bincode::deserialize(
-            &compress::decompress(None)
+            &compress::decompress(&buffer[..])
                 .map_err(|_| DbError::FailedCompression)?,
         )
         .map_err(|_| DbError::FailedDeserialization)?;
 
         #[cfg(not(feature = "compress"))]
-        let result = bincode::deserialize(&buffer)
+        let result = bincode::deserialize(&buffer[..])
             .map_err(|_| DbError::FailedDeserialization)?;
 
-        Ok(result)
+        Ok((file, result))
     }
-}
-
-/// Save data in a file.
-#[allow(dead_code)]
-fn save(source: &[u8]) -> Result<(), DbError> {
-    write(SOURCE_FILE, source).map_err(|_| DbError::Unspecified)?;
-    Ok(())
 }
