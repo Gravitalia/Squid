@@ -8,10 +8,15 @@ pub struct MapAlgorithm {
 }
 
 impl MapAlgorithm {
-    pub fn new<T>(&mut self, key: T, value: usize)
+    /// Adds data to the data contained in the HashMap.
+    pub fn set<T>(&mut self, key: T)
     where
         T: ToString,
     {
-        self.data.insert(key.to_string(), value);
+        if let Some(counter) = self.data.get_mut(&key.to_string()) {
+            *counter += 1;
+        } else {
+            self.data.insert(key.to_string(), 1);
+        }
     }
 }
