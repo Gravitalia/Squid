@@ -158,8 +158,7 @@ where
 {
     let mut file = OpenOptions::new()
         .read(true)
-        .write(false)
-        //.append(true)
+        .write(true)
         .create(true)
         .open(SOURCE_FILE)
         .map_err(|_| DbError::Unspecified)?;
