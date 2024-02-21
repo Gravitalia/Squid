@@ -3,8 +3,9 @@ resolver = "2"
 members = [
     "benchmarks",
     "squid",
+    "squid-algorithm",
     "squid-db",
-    "squid-tokenizer"
+    "squid-tokenizer",
 ]
 
 [workspace.package]
