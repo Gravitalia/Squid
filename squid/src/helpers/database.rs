@@ -1,23 +1,36 @@
-use serde::{Deserialize, Serialize};
+use crate::models::database::Entity;
+use anyhow::Result;
+use squid_algorithm::hashtable::MapAlgorithm;
+use squid_db::Instance;
 
-/// Text representation in the database.
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct Entity {
-    /// Unique identifier of the text.
-    pub id: String,
-    /// Original text without tokenizer processing.
-    /// If set to null, it will not be possible to modify the processing configuration.
-    pub original_text: Option<String>,
-    /// Text after tokenization, lemmatization and processing.
-    pub post_processing_text: String,
-    /// The language in which the text is written.
-    pub lang: String,
-    /// Text lifetime in seconds.
-    /// After this time it will no longer be taken into account in calculations
-    /// and will be deleted.
-    ///
-    /// Set to 0 for infinite.
-    pub ttl: usize,
-    /// Timestamp in seconds since the 1st January, 1970.
-    pub creation_date: usize,
+/// The algorithms managed by Squid.
+#[derive(Debug)]
+pub enum Algorithm {
+    Map(MapAlgorithm),
+}
+
+impl From<MapAlgorithm> for Algorithm {
+    /// Implements conversion from a MapAlgorithm to Algorithm.
+    fn from(map: MapAlgorithm) -> Self {
+        Algorithm::Map(map)
+    }
+}
+
+/// Adds a value to the database and the algorithm.
+pub fn set<A: Into<Algorithm>>(
+    instance: &mut Instance<Entity>,
+    algorithm: A,
+    value: Entity,
+) -> Result<()> {
+    instance.set(value.clone())?;
+
+    match algorithm.into() {
+        Algorithm::Map(mut implementation) => {
+            for str in value.post_processing_text.split_whitespace() {
+                implementation.set(str);
+            }
+        },
+    }
+
+    Ok(())
 }
