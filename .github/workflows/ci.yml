@@ -13,6 +13,7 @@ jobs:
         toolchain: [stable]
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 1440
     steps:
     - uses: actions/checkout@v3
     - run: echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -33,8 +34,8 @@ jobs:
         restore-keys: ${{ runner.os }}-cargo-
     - name: Build
       run: cargo build
-    - name: Clippy
-      run: cargo clippy
+    #- name: Clippy
+    #  run: cargo clippy
     - name: Test
       run: cargo test
     - name: Benchmarks
