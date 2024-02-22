@@ -6,10 +6,20 @@ description.workspace = true
 readme.workspace = true
 edition.workspace = true
 
+[build-dependencies]
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+zip = "0.6"
+
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
+squid-algorithm = { path = "../squid-algorithm" }
 squid-tokenizer = { path = "../squid-tokenizer" }
 
 [[bench]]
 name = "tokenize"
+harness = false
+
+[[bench]]
+name = "million"
 harness = false
