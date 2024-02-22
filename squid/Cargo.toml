@@ -12,6 +12,7 @@ name = "client"
 [dependencies]
 zmq = "0"
 serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 rmp-serde = "1"
 
 anyhow = "1"
@@ -20,5 +21,6 @@ smallvec = { version = "1", features = ["serde"] }
 fern = "0.6"
 log = "0.4"
 
+squid-algorithm = { path = "../squid-algorithm" }
 squid-db = { path = "../squid-db" }
 squid-tokenizer = { path = "../squid-tokenizer" }
