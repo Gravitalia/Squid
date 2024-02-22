@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Text representation in the database.
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct Entity {
     /// Unique identifier of the text.
     pub id: String,
