@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 /// Structure containing the data required by the HashMap algorithm.
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct MapAlgorithm {
     /// Data from the HashMap.
     data: HashMap<String, usize>,
