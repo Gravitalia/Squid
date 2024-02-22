@@ -5,7 +5,7 @@
 //! - HashMap;
 
 #![forbid(unsafe_code)]
-#![deny(unused_imports, unused_mut, missing_docs)]
+#![deny(dead_code, unused_imports, unused_mut, missing_docs)]
 
 /// The most accurate algorithm for ranking.
-mod hashtable;
+pub mod hashtable;
