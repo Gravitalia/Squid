@@ -19,4 +19,19 @@ impl MapAlgorithm {
             self.data.insert(key.to_string(), 1);
         }
     }
+
+    /// Classify the most frequently used words.
+    pub fn rank(&self, length: usize) -> Vec<String> {
+        let mut sorted_word_counts: Vec<_> =
+            self.data.clone().into_iter().collect();
+        sorted_word_counts.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let most_used_words: Vec<_> = sorted_word_counts
+            .iter()
+            .take(length)
+            .map(|(word, _count)| word.clone())
+            .collect();
+
+        most_used_words
+    }
 }
