@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::fs;
 
 fn hashmap_million_benchmark(c: &mut Criterion) {
@@ -22,27 +22,19 @@ fn hashmap_million_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("rank 3 most used words HashMap", |b| {
-        b.iter(|| {
-            map.rank(10)
-        });
+        b.iter(|| map.rank(3));
     });
 
     c.bench_function("rank 5 most used words HashMap", |b| {
-        b.iter(|| {
-            map.rank(5)
-        });
+        b.iter(|| map.rank(5));
     });
 
     c.bench_function("rank 10 most used words HashMap", |b| {
-        b.iter(|| {
-            map.rank(10)
-        });
+        b.iter(|| map.rank(10));
     });
 
     c.bench_function("rank 100 most used words HashMap", |b| {
-        b.iter(|| {
-            map.rank(100)
-        });
+        b.iter(|| map.rank(100));
     });
 }
 
