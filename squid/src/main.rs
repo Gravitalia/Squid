@@ -3,11 +3,45 @@
 mod helpers;
 mod models;
 
-use rmp_serde::Serializer;
-use serde::Serialize;
-use smallvec::smallvec;
+use squid::{
+    squid_server::{Squid, SquidServer},
+    {AddRequest, LeaderboardRequest, Ranking, Void, Word},
+};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tonic::{transport::Server, Request, Response, Status};
 
-fn main() {
+pub mod squid {
+    tonic::include_proto!("squid");
+}
+
+struct SuperSquid {
+    algorithm: helpers::database::Algorithm,
+}
+
+#[tonic::async_trait]
+impl Squid for SuperSquid {
+    async fn leaderboard(
+        &self,
+        request: Request<LeaderboardRequest>,
+    ) -> Result<Response<Ranking>, Status> {
+        Ok(Response::new(Ranking {
+            word: Some(Word {
+                word: "test".to_string(),
+                occurence: 0,
+            }),
+        }))
+    }
+
+    async fn add(
+        &self,
+        request: Request<AddRequest>,
+    ) -> Result<Response<Void>, Status> {
+        Ok(Response::new(Void {}))
+    }
+}
+
+#[tokio::main]
+async fn main() {
     // Set logger with Fern.
     fern::Dispatch::new()
         .format(|out, message, record| {
@@ -20,7 +54,7 @@ fn main() {
                         .as_secs()
                 ),
                 record.level(),
-                message
+                message,
             ))
         })
         .level(if cfg!(debug_assertions) {
@@ -32,35 +66,54 @@ fn main() {
         .apply()
         .unwrap();
 
-    let port = std::env::var("port").unwrap_or_else(|_| "5555".to_string());
-    let responder = zmq::Context::new().socket(zmq::REP).unwrap();
+    let config = helpers::config::read();
 
-    match responder.bind(&format!("tcp://*:{}", port)) {
-        Ok(_) => log::info!("Started Squid server on port {}", port),
-        Err(error) => log::error!("Failed starting Squid: {}", error),
+    // Start database.
+    let mut db_instance: squid_db::Instance<models::database::Entity> =
+        squid_db::Instance::new().unwrap();
+    log::info!(
+        "Loaded instance with {} entities.",
+        db_instance.data.0.len()
+    );
+
+    // Chose algorithm.
+    let mut algo = squid_algorithm::hashtable::MapAlgorithm::default();
+
+    for data in db_instance.data.0.clone() {
+        for str in data.post_processing_text.split_whitespace() {
+            algo.set(str)
+        }
     }
 
-    let mut msg = zmq::Message::new();
-    loop {
-        let mut buf = Vec::new();
-        let val = models::query::Leaderboard {
-            words: smallvec![
-                models::query::Word {
-                    word: "hinome",
-                    occurrence: 0,
-                },
-                models::query::Word {
-                    word: "#gravitalia",
-                    occurrence: 0,
-                },
-            ],
-        };
-        val.serialize(&mut Serializer::new(&mut buf)).unwrap();
+    let start = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros();
 
-        println!("{:?}", buf);
+    let rank = algo.rank(3);
 
-        responder.recv(&mut msg, 0).unwrap();
-        println!("Received {}", msg.as_str().unwrap());
-        responder.send(buf, 0).unwrap();
-    }
+    println!("Rank of the 3 most used words: {:?}", rank);
+
+    println!(
+        "Took {}μs",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros()
+            - start
+    );
+    
+    let addr = format!("0.0.0.0:{}", config.port.unwrap_or(50051))
+        .parse()
+        .unwrap();
+
+    log::info!("Server started on {}", addr);
+
+    Server::builder()
+        .add_service(SquidServer::new(SuperSquid {
+            algorithm: helpers::database::Algorithm::Map(algo),
+        }))
+        .serve(addr)
+        .await
+        .unwrap();
 }
