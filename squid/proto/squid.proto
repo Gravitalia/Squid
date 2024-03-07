@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.gravitalia.squid";
+option java_outer_classname = "SquidProto";
+
+package squid;
+
+// Squid service definition used to perform requests.
+service Squid {
+    // Depends on the algorithm used internally.
+    // Can return a probability of the most frequently used words or an accuracy.
+    rpc Leaderboard (LeaderboardRequest) returns (Ranking) {}
+    // Adds additional sentence to the input.
+    rpc Add (AddRequest) returns (Void) {}
+}
+
+// Nothing to return.
+message Void {}
+
+// The number of most frequently used words to be returned.
+// Recommended 10, usually 20.
+message LeaderboardRequest {
+    uint32 length = 1;
+}
+
+// The sentence added to the entrie and its lifetime.
+message AddRequest {
+    string sentence = 1;
+    uint64 lifetime = 2; 
+}
+
+// Representation of a word.
+message Word {
+    string word = 1;
+    uint64 occurence = 2;
+}
+
+// List of ranked most used words.
+message Ranking {
+    Word word = 1;
+}
