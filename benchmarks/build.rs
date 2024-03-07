@@ -5,7 +5,7 @@ use std::{fs::OpenOptions, io, io::Write};
 async fn main() {
     // Download dataset.
     let resp = reqwest::get(
-        "https://storage.googleapis.com/kaggle-data-sets/46601/84740/bundle/archive.zip?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=gcp-kaggle-com%40kaggle-161607.iam.gserviceaccount.com%2F20240222%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20240222T221154Z&X-Goog-Expires=259200&X-Goog-SignedHeaders=host&X-Goog-Signature=66e60b5ca37b719240daf1622e6267f5bd26783af2cbaea38e8f4d3729e3150f3f8abbbe68503f2e6adfb97fd6865b41e5b630611c9286a5dad928c1ed2b4b6dd7fd0593d11a33bc42f1a28b257fd4598a0236b1855527f59e469648994d85769ba65381f4cc9af71dfc43c97779c0fb958236810194d2626da281a97a05a6bcf25ae1a3cf123ae3d250324ac4d89a652470080b27c55a2814844e87f81d6b5dc7780cc10a25b161de2f6fddc033db284aaf1fb4cd70e3d6c3b49bebd178ea902bc4bee69409ed77c5eeca5ca931f2121df21ebf46113bd4f609f6fe66b35be243e1fb137dbd6f0bb2f80b263d06f068d707a2009419e8bf30355ff88ceeb96d",
+        "https://drive.usercontent.google.com/download?id=1aOYNDj8Rj6iI-nWJkXkAF43bNtoR7LXh&export=download&authuser=0&confirm=t&uuid=c2215629-8193-4f40-9737-1ef1ed1b96e8&at=APZUnTU595qAIh9-PjIMCEUs7obD:1709837225992",
     )
     .await
     .unwrap()
@@ -17,13 +17,13 @@ async fn main() {
         .read(true)
         .write(true)
         .create(true)
-        .open("./archive.zip")
+        .open("./wikisent2.txt")
         .unwrap();
 
     file.write(resp.as_ref()).unwrap();
 
     // Decompress it.
-    let mut archive = zip::ZipArchive::new(file).unwrap();
+    /*let mut archive = zip::ZipArchive::new(file).unwrap();
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
@@ -69,5 +69,5 @@ async fn main() {
         }
     }
 
-    fs::remove_file("./archive.zip").unwrap();
+    fs::remove_file("./archive.zip").unwrap();*/
 }
