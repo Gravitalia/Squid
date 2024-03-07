@@ -12,6 +12,7 @@ name = "client"
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tonic = { version = "0.11", features = ["default"] }
+prost = "0.12"
 
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
@@ -27,4 +28,4 @@ squid-db = { path = "../squid-db" }
 squid-tokenizer = { path = "../squid-tokenizer" }
 
 [build-dependencies]
-tonic-build = { version = "0.11", features = [ "prost" ] }
+tonic-build = { version = "0.11", features = ["prost"] }
