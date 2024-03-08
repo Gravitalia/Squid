@@ -14,7 +14,7 @@ use std::{
     error::Error,
     fmt,
     fs::{File, OpenOptions},
-    io::Read,
+    io::{BufRead, BufReader, Write},
 };
 
 const SOURCE_FILE: &str = "./data.bin";
@@ -59,7 +59,8 @@ where
 /// Structure representing one instance of the database.
 #[derive(Debug)]
 pub struct Instance<T: serde::Serialize> {
-    // file: File,
+    /// File.
+    file: File,
     /// The data in the file represented in the memory.
     pub data: World<T>,
 }
@@ -87,7 +88,7 @@ where
         let loaded_file = load()?;
 
         Ok(Self {
-            // file: loaded_file.0,
+            file: loaded_file.0,
             data: loaded_file.1,
         })
     }
@@ -118,8 +119,6 @@ where
     /// });
     /// ```
     pub fn set(&mut self, data: T) -> Result<(), DbError> {
-        self.data.0.insert(0, data);
-
         #[cfg(feature = "compress")]
         let encoded = compress::compress(
             &bincode::serialize(&self.data.0)
@@ -128,24 +127,42 @@ where
         .map_err(|_| DbError::FailedCompression)?;
 
         #[cfg(not(feature = "compress"))]
-        let encoded = bincode::serialize(&self.data.0)
+        /*let encoded = bincode::serialize(&self.data.0)
+        .map_err(|_| DbError::FailedSerialization)?;*/
+        let encoded = bincode::serialize(&data)
             .map_err(|_| DbError::FailedSerialization)?;
 
+        // Add new data on cache.
+        self.data.0.insert(0, data);
+
+        //self.save_all(&encoded)?;
         self.save(&encoded)?;
 
         Ok(())
     }
 
-    /// Save data in a file.
+    /// Save all data in a file.
+    /// If any data is omitted during registration, it is deleted.
     #[inline(always)]
-    fn save(&mut self, buf: &[u8]) -> Result<(), DbError> {
-        // It seems that data is saved both times here.
-        // I mean, new datas are saved while old kept also, so there are two datas.
-        // And again, and again...
-        /*self.file.write_all(buf).map_err(|_| DbError::Unspecified)?;
-        self.file.flush().map_err(|_| DbError::Unspecified)?;*/
-
+    #[allow(unused)]
+    fn save_all(&mut self, buf: &[u8]) -> Result<(), DbError> {
         std::fs::write(SOURCE_FILE, buf).map_err(|_| DbError::Unspecified)?;
+        Ok(())
+    }
+
+    /// Append one data to the file.
+    #[inline(always)]
+    #[allow(unused)]
+    fn save(&mut self, buf: &[u8]) -> Result<(), DbError> {
+        let mut buffer: Vec<u8> = vec![];
+
+        buffer.extend_from_slice(buf);
+        buffer.extend_from_slice(b"\n");
+
+        self.file
+            .write_all(&buffer)
+            .map_err(|_| DbError::Unspecified)?;
+
         Ok(())
     }
 }
@@ -156,20 +173,26 @@ fn load<T>() -> Result<(File, World<T>), DbError>
 where
     T: serde::de::DeserializeOwned + serde::Serialize,
 {
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
-        .write(true)
+        .append(true)
         .create(true)
         .open(SOURCE_FILE)
         .map_err(|_| DbError::Unspecified)?;
 
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)
-        .map_err(|_| DbError::FailedReading)?;
+    let reader = BufReader::new(&file);
+    let mut world: World<T> = World(Vec::new());
 
-    if buffer.is_empty() {
-        Ok((file, World(vec![])))
-    } else {
+    for line in reader.lines() {
+        world.0.push(
+            bincode::deserialize(
+                line.map_err(|_| DbError::FailedReading)?.as_bytes(),
+            )
+            .map_err(|_| DbError::FailedDeserialization)?,
+        );
+    }
+
+    /*
         #[cfg(feature = "compress")]
         let result = bincode::deserialize(
             &compress::decompress(&buffer[..])
@@ -182,5 +205,7 @@ where
             .map_err(|_| DbError::FailedDeserialization)?;
 
         Ok((file, result))
-    }
+    */
+
+    Ok((file, world))
 }

@@ -12,5 +12,4 @@ lz4 = { version = "1.24", optional = true }
 serde = { version = "1", features = ["derive"] }
 
 [features]
-default = ["compress"]
 compress = ["lz4"]
