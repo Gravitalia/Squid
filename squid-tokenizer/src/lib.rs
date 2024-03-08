@@ -4,19 +4,24 @@ use std::collections::HashSet;
 /// Lowercase words, remove punctuation, separate words into tokens and convert them into numbers.
 pub fn tokenize<T: ToString>(text: T) -> Result<String> {
     let punctuation: HashSet<char> =
-        ['!', ',', '.', ':', ';', '?', '-', '\'', '\"', '(', ')']
+        ['!', ',', '.', ':', ';', '?', '-', '\"', '(', ')']
             .iter()
             .cloned()
             .collect();
 
     let result_string: String = text
         .to_string()
+        .replace('\'', " ")
         .to_lowercase()
         .chars()
         .filter(|c| !punctuation.contains(c))
+        .collect::<String>()
+        .split_ascii_whitespace()
+        .filter(|c| *c != " " && c.len() > 1)
+        .map(|c| format!("{} ", c))
         .collect();
 
-    Ok(result_string)
+    Ok(result_string.trim_end().to_string())
 }
 
 #[cfg(test)]
@@ -30,7 +35,7 @@ mod tests {
 
         assert_eq!(
             tokenize(plaintext).unwrap(),
-            "i really like apples but i prefer gravitalia sometimes yeah"
+            "really like apples but prefer gravitalia sometimes yeah"
         )
     }
 }
