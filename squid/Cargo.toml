@@ -10,10 +10,12 @@ edition.workspace = true
 name = "client"
 
 [dependencies]
-zmq = "0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.11", features = ["default"] }
+prost = "0.12"
+
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
-rmp-serde = "1"
 
 anyhow = "1"
 smallvec = { version = "1", features = ["serde"] }
@@ -24,3 +26,6 @@ log = "0.4"
 squid-algorithm = { path = "../squid-algorithm" }
 squid-db = { path = "../squid-db" }
 squid-tokenizer = { path = "../squid-tokenizer" }
+
+[build-dependencies]
+tonic-build = { version = "0.11", features = ["prost"] }

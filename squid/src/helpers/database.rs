@@ -34,3 +34,14 @@ pub fn set<A: Into<Algorithm>>(
 
     Ok(())
 }
+
+/// Rank the most used words.
+pub fn rank<A: Into<Algorithm>>(
+    instance: &mut Instance<Entity>,
+    algorithm: A,
+    length: usize,
+) -> Result<Vec<String>> {
+    match algorithm.into() {
+        Algorithm::Map(implementation) => Ok(implementation.rank(length)),
+    }
+}
