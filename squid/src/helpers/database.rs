@@ -4,7 +4,7 @@ use squid_algorithm::hashtable::MapAlgorithm;
 use squid_db::Instance;
 
 /// The algorithms managed by Squid.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Algorithm {
     Map(MapAlgorithm),
 }
@@ -37,10 +37,9 @@ pub fn set<A: Into<Algorithm>>(
 
 /// Rank the most used words.
 pub fn rank<A: Into<Algorithm>>(
-    instance: &mut Instance<Entity>,
     algorithm: A,
     length: usize,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, usize)>> {
     match algorithm.into() {
         Algorithm::Map(implementation) => Ok(implementation.rank(length)),
     }
