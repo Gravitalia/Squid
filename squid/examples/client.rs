@@ -1,25 +1,30 @@
-use serde::Deserialize;
+use squid::squid_client::SquidClient;
+use squid::LeaderboardRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct Leaderboard {
-    pub words: Vec<Word>,
+pub mod squid {
+    tonic::include_proto!("squid");
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Word {
-    pub word: String,
-    pub occurrence: usize,
-}
-
-fn main() {
+#[tokio::main]
+async fn main() {
     // Calculate time taken.
     let now: u128 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_millis();
 
+    // Get leaderboard of 10 most used words.
+    let response = SquidClient::connect("http://localhost:50051")
+        .await
+        .unwrap()
+        .leaderboard(LeaderboardRequest { length: 10 })
+        .await
+        .unwrap()
+        .into_inner();
+
     println!(
-        "Received in {}ms",
+        "Received {:?} in {}ms",
+        response.word,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time went backwards")
