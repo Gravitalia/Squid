@@ -39,8 +39,8 @@ pub fn set<A: Into<Algorithm>>(
 pub fn rank<A: Into<Algorithm>>(
     algorithm: A,
     length: usize,
-) -> Result<Vec<(String, usize)>> {
+) -> Vec<(String, usize)> {
     match algorithm.into() {
-        Algorithm::Map(implementation) => Ok(implementation.rank(length)),
+        Algorithm::Map(implementation) => implementation.rank(length),
     }
 }
