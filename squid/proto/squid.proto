@@ -27,7 +27,7 @@ message LeaderboardRequest {
 // The sentence added to the entrie and its lifetime.
 message AddRequest {
     string sentence = 1;
-    uint64 lifetime = 2; 
+    uint64 lifetime = 2;
 }
 
 // Representation of a word.
@@ -38,5 +38,5 @@ message Word {
 
 // List of ranked most used words.
 message Ranking {
-    Word word = 1;
+    repeated Word word = 1;
 }
