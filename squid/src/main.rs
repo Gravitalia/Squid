@@ -39,10 +39,10 @@ impl Squid for SuperSquid {
             .collect::<Vec<_>>(),
         }))
     }
-
+    
     async fn add(
         &self,
-        request: Request<AddRequest>,
+        _request: Request<AddRequest>,
     ) -> Result<Response<Void>, Status> {
         let data = request.into_inner();
 
