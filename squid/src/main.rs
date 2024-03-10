@@ -8,7 +8,7 @@ use squid::{
     {AddRequest, LeaderboardRequest, Ranking, Void, Word},
 };
 use squid_tokenizer::tokenize;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, RwLock};
 use tonic::{transport::Server, Request, Response, Status};
 
 pub mod squid {
@@ -17,7 +17,7 @@ pub mod squid {
 
 struct SuperSquid {
     algorithm: helpers::database::Algorithm,
-    instance: squid_db::Instance<models::database::Entity>,
+    instance: Arc<RwLock<squid_db::Instance<models::database::Entity>>>,
 }
 
 #[tonic::async_trait]
@@ -42,8 +42,33 @@ impl Squid for SuperSquid {
     
     async fn add(
         &self,
-        _request: Request<AddRequest>,
+        request: Request<AddRequest>,
     ) -> Result<Response<Void>, Status> {
+        let data = request.into_inner();
+
+        helpers::database::set(
+            Arc::clone(&self.instance),
+            self.algorithm.clone(),
+            models::database::Entity {
+                id: String::default(),
+                original_text: None,
+                post_processing_text: tokenize(&data.sentence).map_err(
+                    |error| {
+                        log::error!(
+                            "Failed to tokenize {:?}: {}",
+                            data.sentence,
+                            error
+                        );
+                        Status::invalid_argument("failed to tokenize sentence")
+                    },
+                )?,
+                lang: "fr".to_string(),
+                ttl: data.lifetime as usize,
+                creation_date: 0,
+            },
+        )
+        .unwrap();
+
         Ok(Response::new(Void {}))
     }
 }
@@ -102,7 +127,7 @@ async fn main() {
     Server::builder()
         .add_service(SquidServer::new(SuperSquid {
             algorithm: helpers::database::Algorithm::Map(algo),
-            instance: db_instance,
+            instance: Arc::new(RwLock::new(db_instance)),
         }))
         .serve(addr)
         .await

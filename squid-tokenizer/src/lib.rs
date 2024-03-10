@@ -21,7 +21,18 @@ pub fn tokenize<T: ToString>(text: T) -> Result<String> {
         .map(|c| format!("{} ", c))
         .collect();
 
-    Ok(result_string.trim_end().to_string())
+    let normalize = result_string
+        .chars()
+        .map(|c| {
+            if c.len_utf8() > 1 {
+                c.escape_unicode().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect::<String>();
+
+    Ok(normalize.trim_end().to_string())
 }
 
 #[cfg(test)]
