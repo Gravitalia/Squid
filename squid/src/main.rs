@@ -31,10 +31,6 @@ impl Squid for SuperSquid {
                 self.algorithm.clone(),
                 request.into_inner().length as usize,
             )
-            .map_err(|error| {
-                log::error!("Failed to rank most used words: {}", error);
-                Status::invalid_argument("failed to rank")
-            })?
             .iter()
             .map(|(word, occurence)| Word {
                 word: word.to_string(),
@@ -43,7 +39,7 @@ impl Squid for SuperSquid {
             .collect::<Vec<_>>(),
         }))
     }
-
+    
     async fn add(
         &self,
         _request: Request<AddRequest>,
