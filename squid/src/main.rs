@@ -42,7 +42,7 @@ impl Squid for SuperSquid {
     
     async fn add(
         &self,
-        _request: Request<AddRequest>,
+        request: Request<AddRequest>,
     ) -> Result<Response<Void>, Status> {
         let data = request.into_inner();
 
