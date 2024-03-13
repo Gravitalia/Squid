@@ -1,10 +1,12 @@
+use ahash::RandomState;
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// Structure containing the data required by the HashMap algorithm.
 #[derive(Debug, Default, Clone)]
 pub struct MapAlgorithm {
     /// Data from the HashMap.
-    data: HashMap<String, usize>,
+    data: HashMap<String, usize, RandomState>,
 }
 
 impl MapAlgorithm {
@@ -27,7 +29,7 @@ impl MapAlgorithm {
         sorted_word_counts.sort_by(|a, b| b.1.cmp(&a.1));
 
         let most_used_words: Vec<_> = sorted_word_counts
-            .iter()
+            .par_iter()
             .take(length)
             .map(|(word, count)| (word.clone(), *count))
             .collect();
