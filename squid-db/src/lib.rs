@@ -63,7 +63,7 @@ pub struct Instance<T: serde::Serialize> {
     /// Provide access to an open file on the filesystem.
     /// There is no need to re-open the file each time.
     file: File,
-    ///
+    /// Data saved on disk.
     pub entries: Vec<T>,
     /// Caching of data to be written to avoid overload and bottlenecks.
     memtable: Vec<Vec<u8>>,
@@ -117,7 +117,7 @@ where
     ///     love_him: bool,
     /// }
     ///
-    /// let mut instance: Instance<Entity> = Instance::new().unwrap();
+    /// let mut instance: Instance<Entity> = Instance::new(0).unwrap();
     ///
     /// instance.set(Entity {
     ///     data: "I really like my classmate, Julien".to_string(),
