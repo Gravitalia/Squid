@@ -39,7 +39,7 @@ impl Squid for SuperSquid {
             .collect::<Vec<_>>(),
         }))
     }
-    
+
     async fn add(
         &self,
         request: Request<AddRequest>,
@@ -102,21 +102,24 @@ async fn main() {
     let config = helpers::config::read();
 
     // Start database.
-    let db_instance: squid_db::Instance<models::database::Entity> =
-        squid_db::Instance::new().unwrap();
+    let mut db_instance: squid_db::Instance<models::database::Entity> =
+        squid_db::Instance::new(6000).unwrap(); // 6MB.
     log::info!(
         "Loaded instance with {} entities.",
-        db_instance.data.0.len()
+        db_instance.entries.len()
     );
 
     // Chose algorithm.
     let mut algo = squid_algorithm::hashtable::MapAlgorithm::default();
 
-    for data in db_instance.data.0.clone() {
+    for data in &db_instance.entries {
         for str in data.post_processing_text.split_whitespace() {
             algo.set(str)
         }
     }
+
+    // Remove entires to reduce ram usage.
+    db_instance.entries.clear();
 
     let addr = format!("0.0.0.0:{}", config.port.unwrap_or(50051))
         .parse()
