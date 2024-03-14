@@ -15,6 +15,7 @@ use std::{
     fmt,
     fs::{File, OpenOptions},
     io::{BufRead, BufReader, Write},
+    marker::PhantomData,
 };
 
 const SOURCE_FILE: &str = "./data.bin";
@@ -59,10 +60,17 @@ where
 /// Structure representing one instance of the database.
 #[derive(Debug)]
 pub struct Instance<T: serde::Serialize> {
-    /// File.
+    /// Provide access to an open file on the filesystem.
+    /// There is no need to re-open the file each time.
     file: File,
-    /// The data in the file represented in the memory.
-    pub data: World<T>,
+    /// Data saved on disk.
+    pub entries: Vec<T>,
+    /// Caching of data to be written to avoid overload and bottlenecks.
+    memtable: Vec<Vec<u8>>,
+    /// After how many kb the data is written hard to the disk.
+    /// Set to 0 to deactivate the memory table.
+    memtable_flush_size_in_kb: usize,
+    phantom: PhantomData<T>,
 }
 
 impl<T> Instance<T>
@@ -81,15 +89,18 @@ where
     ///     data: String,
     /// }
     ///
-    /// let instance: Instance<Entity> = Instance::new().unwrap();
+    /// let instance: Instance<Entity> = Instance::new(0).unwrap();
     /// //... then you can do enything with the instance.
     /// ```
-    pub fn new() -> Result<Self, DbError> {
-        let loaded_file = load()?;
+    pub fn new(memtable_flush_size_in_kb: usize) -> Result<Self, DbError> {
+        let (file, entires) = load::<T>()?;
 
         Ok(Self {
-            file: loaded_file.0,
-            data: loaded_file.1,
+            file,
+            entries: entires.0,
+            memtable: Vec::new(),
+            memtable_flush_size_in_kb,
+            phantom: PhantomData,
         })
     }
 
@@ -106,7 +117,7 @@ where
     ///     love_him: bool,
     /// }
     ///
-    /// let mut instance: Instance<Entity> = Instance::new().unwrap();
+    /// let mut instance: Instance<Entity> = Instance::new(0).unwrap();
     ///
     /// instance.set(Entity {
     ///     data: "I really like my classmate, Julien".to_string(),
@@ -127,16 +138,23 @@ where
         .map_err(|_| DbError::FailedCompression)?;
 
         #[cfg(not(feature = "compress"))]
-        /*let encoded = bincode::serialize(&self.data.0)
-        .map_err(|_| DbError::FailedSerialization)?;*/
         let encoded = bincode::serialize(&data)
             .map_err(|_| DbError::FailedSerialization)?;
 
-        // Add new data on cache.
-        self.data.0.insert(0, data);
+        match self.memtable_flush_size_in_kb {
+            0 => self.save(&encoded)?,
+            max_kb_size => {
+                self.memtable.push(encoded);
 
-        //self.save_all(&encoded)?;
-        self.save(&encoded)?;
+                if max_kb_size
+                    > (std::mem::size_of::<Vec<T>>()
+                        + self.memtable.capacity() * std::mem::size_of::<T>())
+                        / 1000
+                {
+                    self.flush()?
+                }
+            },
+        }
 
         Ok(())
     }
@@ -162,6 +180,23 @@ where
         self.file
             .write_all(&buffer)
             .map_err(|_| DbError::Unspecified)?;
+
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), DbError> {
+        let mut buffer: Vec<u8> = Vec::with_capacity(self.memtable.len());
+
+        for data in &self.memtable {
+            buffer.extend_from_slice(data);
+            buffer.extend_from_slice(b"\n");
+        }
+
+        self.file
+            .write_all(&buffer)
+            .map_err(|_| DbError::Unspecified)?;
+
+        self.memtable.clear();
 
         Ok(())
     }
