@@ -1,0 +1,36 @@
+load("@crate_index//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "squid-tokenizer",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    deps = all_crate_deps(
+        normal = True,
+    ),
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    rustc_flags = [
+        "-Copt-level=3",
+        "-Cstrip=symbols",
+        "-Clto=fat",
+        "-Cembed-bitcode=yes",
+        "-Ccodegen-units=1",
+        "-Cdebuginfo=none",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+rust_test(
+    name = "squid-tokenizer_test",
+    crate = ":squid-tokenizer",
+    deps = all_crate_deps(
+        normal_dev = True,
+    ),
+    proc_macro_deps = all_crate_deps(
+        proc_macro_dev = True,
+    ),
+)

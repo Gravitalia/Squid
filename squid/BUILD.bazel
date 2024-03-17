@@ -1,0 +1,107 @@
+load("@crate_index//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_image_index", "oci_push")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_proto//proto:defs.bzl", "proto_library")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+proto_library(
+    name = "squid_proto",
+    srcs = ["proto/squid.proto"],
+    visibility = ["//visibility:public"],
+)
+
+CUSTOM_CRATES = [
+    "//squid-algorithm",
+    "//squid-db",
+    "//squid-tokenizer",
+    ":proto_build_script",
+]
+
+rust_binary(
+    name = "squid",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    deps = CUSTOM_CRATES + all_crate_deps(
+        normal = True,
+    ),
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    rustc_flags = [
+        "-Copt-level=3",
+        "-Cstrip=symbols",
+        "-Cpanic=abort",
+        "-Clto=fat",
+        "-Cembed-bitcode=yes",
+        "-Ccodegen-units=1",
+        "-Cdebuginfo=none",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+rust_test(
+    name = "squid_test",
+    crate = ":squid",
+    deps = CUSTOM_CRATES + all_crate_deps(
+        normal = True,
+    ),
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    size = "medium",
+    timeout = "short",
+)
+
+cargo_build_script(
+    name = "proto_build_script",
+    srcs = ["build.rs"],
+    build_script_env = {
+        "PROTOC": "$(execpath @com_google_protobuf//:protoc)",
+    },
+    data = [
+        ":squid_proto",
+        "@com_google_protobuf//:protoc",
+    ],
+    deps = all_crate_deps(
+        build = True,
+    ),
+)
+
+# Build and publish to Docker.
+
+# Compress binary to layer.
+pkg_tar(
+    name = "layer",
+    srcs = [":squid"],
+)
+
+# Build image.
+oci_image(
+    name = "linux",
+    base = "@distroless_cc",
+    tars = [":layer"],
+    entrypoint = ["/squid"],
+    #exposed_ports = ["1111/tcp"],
+)
+
+# Add multiple images.
+oci_image_index(
+    name = "images",
+    images = [
+        ":linux",
+    ],
+)
+
+# Publish to Docker Hub.
+oci_push(
+    name = "push",
+    image = ":images",
+    repository = "ghcr.io/gravitalia/squid",
+    remote_tags = [
+        "latest",
+        "1.0.0",
+    ]
+)
