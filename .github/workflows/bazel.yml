@@ -29,7 +29,7 @@ jobs:
         key: ${{ runner.os }}-bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'Cargo.Bazel.lock') }}
         restore-keys: |
           ${{ runner.os }}-bazel-
-    - name: Build Autha
+    - name: Build Squid
       run: bazel build //... --strip=always --compilation_mode opt
       shell: bash
     - name: Run tests
