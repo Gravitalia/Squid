@@ -14,9 +14,9 @@ use tonic::{transport::Server, Request, Response, Status};
 pub mod squid {
     tonic::include_proto!("squid");
 }
-
 struct SuperSquid {
     algorithm: helpers::database::Algorithm,
+    config: models::config::Config,
     instance: Arc<RwLock<squid_db::Instance<models::database::Entity>>>,
 }
 
@@ -47,6 +47,7 @@ impl Squid for SuperSquid {
         let data = request.into_inner();
 
         helpers::database::set(
+            &self.config,
             Arc::clone(&self.instance),
             self.algorithm.clone(),
             models::database::Entity {
@@ -110,11 +111,29 @@ async fn main() {
     );
 
     // Chose algorithm.
-    let mut algo = squid_algorithm::hashtable::MapAlgorithm::default();
+    let mut algo = match config.service.algorithm {
+        models::config::Algorithm::Hashmap => {
+            squid_algorithm::hashtable::MapAlgorithm::default()
+        },
+    };
 
     for data in &db_instance.entries {
         for str in data.post_processing_text.split_whitespace() {
-            algo.set(str)
+            if !config.service.exclude.contains(&str.to_string()) {
+                match config.service.message_type {
+                    models::config::MessageType::Hashtag => {
+                        if str.starts_with('#') {
+                            algo.set(str)
+                        }
+                    },
+                    models::config::MessageType::Word => {
+                        if !str.starts_with('#') {
+                            algo.set(str)
+                        }
+                    },
+                    _ => algo.set(str),
+                }
+            }
         }
     }
 
@@ -126,10 +145,14 @@ async fn main() {
     ctrlc::set_handler(move || {
         log::info!("Flush memtable...");
         if let Err(err) = ctrlc_instance.write().unwrap().flush() {
-            log::error!("Some data haven't been flushed from memtable: {}", err);
+            log::error!(
+                "Some data haven't been flushed from memtable: {}",
+                err
+            );
         }
         std::process::exit(0);
-    }).expect("Failed to set Ctrl+C handler");
+    })
+    .expect("Failed to set Ctrl+C handler");
 
     let addr = format!("0.0.0.0:{}", config.port.unwrap_or(50051))
         .parse()
@@ -140,6 +163,7 @@ async fn main() {
     Server::builder()
         .add_service(SquidServer::new(SuperSquid {
             algorithm: helpers::database::Algorithm::Map(algo),
+            config,
             instance,
         }))
         .serve(addr)
