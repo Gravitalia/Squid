@@ -19,6 +19,7 @@ impl From<MapAlgorithm> for Algorithm {
 
 /// Adds a value to the database and the algorithm.
 pub fn set<A: Into<Algorithm>>(
+    config: &crate::models::config::Config,
     instance: Arc<RwLock<Instance<Entity>>>,
     algorithm: A,
     value: Entity,
@@ -34,7 +35,21 @@ pub fn set<A: Into<Algorithm>>(
     match algorithm.into() {
         Algorithm::Map(mut implementation) => {
             for str in value.post_processing_text.split_whitespace() {
-                implementation.set(str);
+                if !config.service.exclude.contains(&str.to_string()) {
+                    match config.service.message_type {
+                        crate::models::config::MessageType::Hashtag => {
+                            if str.starts_with('#') {
+                                implementation.set(str)
+                            }
+                        },
+                        crate::models::config::MessageType::Word => {
+                            if !str.starts_with('#') {
+                                implementation.set(str)
+                            }
+                        },
+                        _ => implementation.set(str),
+                    }
+                }
             }
         },
     }
