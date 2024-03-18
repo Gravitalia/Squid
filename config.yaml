@@ -2,7 +2,7 @@ update_frequency_sec: 900 # in seconds
 
 services:
   - name: gravitalia # collection name
+    algorithm: Hashmap # Only Hashmap is disponible.
     max_words: 5 # maximum words output, max. value: 255
-    message_type: all # word, hashtag or all
-    lang: global # global or ISO 639-1
+    message_type: Anything # Anything, Word or Hashtag
     exclude: [] # words or hashtags to exclude in search
