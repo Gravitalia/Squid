@@ -121,6 +121,16 @@ async fn main() {
     // Remove entires to reduce ram usage.
     db_instance.entries.clear();
 
+    let instance = Arc::new(RwLock::new(db_instance));
+    let ctrlc_instance = Arc::clone(&instance);
+    ctrlc::set_handler(move || {
+        log::info!("Flush memtable...");
+        if let Err(err) = ctrlc_instance.write().unwrap().flush() {
+            log::error!("Some data haven't been flushed from memtable: {}", err);
+        }
+        std::process::exit(0);
+    }).expect("Failed to set Ctrl+C handler");
+
     let addr = format!("0.0.0.0:{}", config.port.unwrap_or(50051))
         .parse()
         .unwrap();
@@ -130,7 +140,7 @@ async fn main() {
     Server::builder()
         .add_service(SquidServer::new(SuperSquid {
             algorithm: helpers::database::Algorithm::Map(algo),
-            instance: Arc::new(RwLock::new(db_instance)),
+            instance,
         }))
         .serve(addr)
         .await
