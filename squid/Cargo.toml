@@ -23,6 +23,7 @@ serde_yaml = "0.9"
 anyhow = "1"
 fern = "0.6"
 log = "0.4"
+ctrlc = "3"
 
 squid-algorithm = { path = "../squid-algorithm" }
 squid-db = { path = "../squid-db" }
