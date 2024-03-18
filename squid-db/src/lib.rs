@@ -184,7 +184,8 @@ where
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), DbError> {
+    /// Saves the data contained in the buffer to the hard disk.
+    pub fn flush(&mut self) -> Result<(), DbError> {
         let mut buffer: Vec<u8> = Vec::with_capacity(self.memtable.len());
 
         for data in &self.memtable {
