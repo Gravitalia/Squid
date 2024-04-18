@@ -51,7 +51,7 @@ impl Squid for SuperSquid {
             Arc::clone(&self.instance),
             self.algorithm.clone(),
             models::database::Entity {
-                id: String::default(),
+                id: uuid::Uuid::new_v4().to_string(),
                 original_text: None,
                 post_processing_text: tokenize(&data.sentence).map_err(
                     |error| {
