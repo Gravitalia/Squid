@@ -8,7 +8,11 @@ use squid::{
     {AddRequest, LeaderboardRequest, Ranking, Void, Word},
 };
 use squid_tokenizer::tokenize;
-use std::sync::{Arc, RwLock};
+use std::{
+    ops::Add,
+    sync::{Arc, RwLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tonic::{transport::Server, Request, Response, Status};
 
 pub mod squid {
@@ -19,6 +23,8 @@ struct SuperSquid {
     config: models::config::Config,
     instance: Arc<RwLock<squid_db::Instance<models::database::Entity>>>,
 }
+
+const FLUSHTABLE_FLUSH_SIZE_KB: usize = 100; // 100kB.
 
 #[tonic::async_trait]
 impl Squid for SuperSquid {
@@ -64,8 +70,14 @@ impl Squid for SuperSquid {
                     },
                 )?,
                 lang: "fr".to_string(),
-                ttl: data.lifetime as usize,
-                creation_date: 0,
+                meta: format!(
+                    "expire_at:{}",
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .add(Duration::from_secs(data.lifetime))
+                        .as_secs()
+                ),
             },
         )
         .unwrap();
@@ -103,8 +115,8 @@ async fn main() {
     let config = helpers::config::read();
 
     // Start database.
-    let mut db_instance: squid_db::Instance<models::database::Entity> =
-        squid_db::Instance::new(6000).unwrap(); // 6MB.
+    let db_instance: squid_db::Instance<models::database::Entity> =
+        squid_db::Instance::new(FLUSHTABLE_FLUSH_SIZE_KB).unwrap();
     log::info!(
         "Loaded instance with {} entities.",
         db_instance.entries.len()
@@ -137,19 +149,24 @@ async fn main() {
         }
     }
 
-    // Remove entires to reduce ram usage.
-    db_instance.entries.clear();
+    // Init TTL.
+    let instance = db_instance.start_ttl();
 
-    let instance = Arc::new(RwLock::new(db_instance));
+    // Remove entires to reduce ram usage.
+    instance.write().unwrap().entries.clear();
+
     let ctrlc_instance = Arc::clone(&instance);
     ctrlc::set_handler(move || {
-        log::info!("Flush memtable...");
-        if let Err(err) = ctrlc_instance.write().unwrap().flush() {
-            log::error!(
-                "Some data haven't been flushed from memtable: {}",
-                err
-            );
+        if FLUSHTABLE_FLUSH_SIZE_KB > 0 {
+            log::info!("Flush memtable...");
+            if let Err(err) = ctrlc_instance.write().unwrap().flush() {
+                log::error!(
+                    "Some data haven't been flushed from memtable: {}",
+                    err
+                );
+            }
         }
+
         std::process::exit(0);
     })
     .expect("Failed to set Ctrl+C handler");
