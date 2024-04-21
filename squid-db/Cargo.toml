@@ -10,6 +10,8 @@ edition.workspace = true
 bincode = "1"
 lz4 = { version = "1.24", optional = true }
 serde = { version = "1", features = ["derive"] }
+tokio = "1"
+uuid = { version = "1", features = ["v4", "fast-rng"] }
 
 [features]
 compress = ["lz4"]
