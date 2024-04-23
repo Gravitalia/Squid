@@ -21,7 +21,6 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
 };
-use tracing::trace;
 
 const SOURCE_DIRECTORY: &str = "./data/";
 const FILE_EXT: &str = "bin";
