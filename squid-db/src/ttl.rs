@@ -60,18 +60,20 @@ where
         let actual_hour = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs()
-            / SECONDS_IN_HOUR;
-        let hours = timestamp / SECONDS_IN_HOUR;
+            .as_secs();
 
-        if actual_hour >= hours {
+        if actual_hour >= timestamp {
             // Remove expired entry.
-            self.instance.read().unwrap().delete(id);
+            self.instance
+                .read()
+                .unwrap()
+                .delete(id)
+                .map_err(|_| DbError::FailedWriting)?;
         } else {
             self.periods
                 .write()
                 .map_err(|_| DbError::FailedWriting)?
-                .entry(hours)
+                .entry(timestamp / SECONDS_IN_HOUR)
                 .and_modify(|e| {
                     e.push(Entry {
                         id: id.clone(),
@@ -111,7 +113,7 @@ where
                 {
                     for timer in timers {
                         let entry = timer.clone();
-                        let aa = Arc::clone(&instance);
+                        let instance = Arc::clone(&instance);
 
                         tokio::task::spawn(async move {
                             sleep(Duration::from_secs(
@@ -122,7 +124,7 @@ where
                                         .as_secs(),
                             ));
 
-                            aa.read().unwrap().delete("".to_string());
+                            let _ = instance.read().unwrap().delete(entry.id);
                         });
                     }
                 }
