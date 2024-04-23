@@ -21,6 +21,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
 };
+use tracing::trace;
 
 const SOURCE_DIRECTORY: &str = "./data/";
 const FILE_EXT: &str = "bin";
@@ -96,7 +97,7 @@ pub struct Instance<
     /// Data saved on disk.
     pub entries: Vec<T>,
     /// Caching of data to be written to avoid overload and bottlenecks.
-    memtable: Vec<Vec<u8>>,
+    memtable: Vec<T>,
     /// After how many kb the data is written hard to the disk.
     /// Set to 0 to deactivate the memory table.
     memtable_flush_size_in_kb: usize,
@@ -246,29 +247,21 @@ where
     /// });
     /// ```
     pub fn set(&mut self, data: T) -> Result<(), DbError> {
-        #[cfg(feature = "compress")]
-        let encoded = compress::compress(
-            &bincode::serialize(&self.data.0)
-                .map_err(|_| DbError::FailedSerialization)?,
-        )
-        .map_err(|_| DbError::FailedCompression)?;
-
-        #[cfg(not(feature = "compress"))]
-        let encoded = bincode::serialize(&data)
-            .map_err(|_| DbError::FailedSerialization)?;
-
         match self.memtable_flush_size_in_kb {
-            0 => self.save(&encoded)?,
+            0 => {
+                #[cfg(not(feature = "compress"))]
+                let encoded = bincode::serialize(&data)
+                    .map_err(|_| DbError::FailedSerialization)?;
+
+                self.save(&encoded)?
+            },
             max_kb_size => {
-                self.memtable.push(encoded);
+                self.memtable.push(data);
 
                 if max_kb_size
                     < (self.memtable.len() * std::mem::size_of::<T>()) / 1000
                 {
-                    self.flush().map_err(|e| {
-                        println!("{}", e);
-                        DbError::Unspecified
-                    })?
+                    self.flush().map_err(|_| DbError::Unspecified)?
                 }
             },
         }
@@ -277,14 +270,59 @@ where
     }
 
     /// Deletes a record from the data based on its unique identifier.
-    pub fn delete(&self, id: String) {
-        println!("{:?}", self.index.get(&id));
+    pub fn delete(&self, id: String) -> Result<(), DbError> {
+        if let Some(file_name) = self.index.get(&id) {
+            let file =
+                File::open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
+                    .map_err(|_| DbError::FailedReading)?;
+            let reader = BufReader::new(file);
+
+            let lines: Vec<Vec<u8>> = reader
+                .lines()
+                .filter_map(|line| line.ok())
+                .map(|entry| entry.as_bytes().to_vec())
+                .collect();
+
+            let index_to_delete = lines.iter().position(|line| {
+                if let Ok(data) = bincode::deserialize::<T>(line) {
+                    return data.id() == id;
+                }
+                false
+            });
+
+            if let Some(index) = index_to_delete {
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
+                    .map_err(|_| DbError::Unspecified)?;
+
+                lines.iter().enumerate().for_each(|(i, line)| {
+                    if i != index {
+                        writeln!(file, "{}", String::from_utf8_lossy(line))
+                            .unwrap();
+                    }
+                });
+            }
+        } else {
+            // TODO: support memtable deletation.
+            //self.memtable.retain(|entry| entry.id() != id);
+            return Err(DbError::Unspecified);
+        }
+
+        Ok(())
     }
 
     /// Append one data to the file.
     #[inline(always)]
     #[allow(unused)]
     fn save(&mut self, buf: &[u8]) -> Result<(), DbError> {
+        let reader = io::BufReader::new(&self.file);
+        let mut line_count = 0;
+        for _line in reader.lines() {
+            line_count += 1;
+        }
+
         let mut buffer: Vec<u8> = vec![];
 
         buffer.extend_from_slice(buf);
@@ -293,6 +331,26 @@ where
         self.file
             .write_all(&buffer)
             .map_err(|_| DbError::Unspecified)?;
+
+        if line_count + 1 >= MAX_ENTRIES_PER_FILE.into() {
+            let path = PathBuf::from(SOURCE_DIRECTORY).join(format!(
+                "{}.{}",
+                uuid::Uuid::new_v4(),
+                FILE_EXT
+            ));
+
+            self.file = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(&path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "failed to create new file on {}",
+                        path.to_string_lossy()
+                    )
+                });
+        }
 
         Ok(())
     }
@@ -312,7 +370,10 @@ where
 
             let mut file_limit = (MAX_ENTRIES_PER_FILE as usize) - line_count;
             for n in 0..file_limit {
-                buffer.extend_from_slice(&self.memtable[n]);
+                buffer.extend_from_slice(
+                    &bincode::serialize(&self.memtable[n])
+                        .map_err(|_| DbError::FailedSerialization)?,
+                );
                 buffer.extend_from_slice(b"\n");
             }
 
@@ -344,7 +405,10 @@ where
             {
                 file_limit += 1;
 
-                buffer.extend_from_slice(&self.memtable[file_limit]);
+                buffer.extend_from_slice(
+                    &bincode::serialize(&self.memtable[file_limit])
+                        .map_err(|_| DbError::FailedSerialization)?,
+                );
                 buffer.extend_from_slice(b"\n");
             }
 
@@ -355,7 +419,10 @@ where
             let mut buffer: Vec<u8> = Vec::with_capacity(self.memtable.len());
 
             for data in &self.memtable {
-                buffer.extend_from_slice(data);
+                buffer.extend_from_slice(
+                    &bincode::serialize(&data)
+                        .map_err(|_| DbError::FailedSerialization)?,
+                );
                 buffer.extend_from_slice(b"\n");
             }
 
