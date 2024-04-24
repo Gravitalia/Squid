@@ -1,8 +1,9 @@
 use crate::models::database::Entity;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use squid_algorithm::hashtable::MapAlgorithm;
 use squid_db::Instance;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// The algorithms managed by Squid.
 #[derive(Debug, Clone)]
@@ -18,19 +19,13 @@ impl From<MapAlgorithm> for Algorithm {
 }
 
 /// Adds a value to the database and the algorithm.
-pub fn set<A: Into<Algorithm>>(
+pub async fn set<A: Into<Algorithm>>(
     config: &crate::models::config::Config,
     instance: Arc<RwLock<Instance<Entity>>>,
     algorithm: A,
     value: Entity,
 ) -> Result<()> {
-    instance
-        .write()
-        .map_err(|error| {
-            log::error!("Failed to mutate instance on `set`: {}", error);
-            anyhow!("cannot mutate instance")
-        })?
-        .set(value.clone())?;
+    instance.write().await.set(value.clone())?;
 
     match algorithm.into() {
         Algorithm::Map(mut implementation) => {
