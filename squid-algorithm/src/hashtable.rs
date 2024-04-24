@@ -15,11 +15,10 @@ impl MapAlgorithm {
     where
         T: ToString,
     {
-        if let Some(counter) = self.data.get_mut(&key.to_string()) {
-            *counter += 1;
-        } else {
-            self.data.insert(key.to_string(), 1);
-        }
+        self.data
+            .entry(key.to_string())
+            .and_modify(|d| *d += 1)
+            .or_insert(1);
     }
 
     /// Classify the most frequently used words.
