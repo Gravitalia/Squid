@@ -13,6 +13,7 @@ use std::{
     thread::sleep,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::RwLock as AsyncRwLock;
 
 const SECONDS_IN_HOUR: u64 = 3600;
 
@@ -33,7 +34,7 @@ pub struct TTL<
         + 'static,
 > {
     periods: Arc<RwLock<HashMap<u64, Vec<Entry>>>>,
-    instance: Arc<RwLock<Instance<T>>>,
+    instance: Arc<AsyncRwLock<Instance<T>>>,
 }
 
 impl<T> TTL<T>
@@ -45,7 +46,7 @@ where
         + std::marker::Sync
         + 'static,
 {
-    pub fn new(instance: Arc<RwLock<Instance<T>>>) -> Self {
+    pub fn new(instance: Arc<AsyncRwLock<Instance<T>>>) -> Self {
         Self {
             instance,
             periods: Arc::new(RwLock::new(HashMap::default())),
@@ -64,11 +65,19 @@ where
 
         if actual_hour >= timestamp {
             // Remove expired entry.
-            self.instance
-                .read()
-                .unwrap()
-                .delete(id)
-                .map_err(|_| DbError::FailedWriting)?;
+            /*self.instance
+            .read()
+            .unwrap()
+            .delete(id)
+            .map_err(|_| DbError::FailedWriting)?;*/
+        } else if actual_hour / SECONDS_IN_HOUR == timestamp / SECONDS_IN_HOUR {
+            let instance = Arc::clone(&self.instance);
+
+            tokio::task::spawn(async move {
+                sleep(Duration::from_secs(timestamp - actual_hour));
+
+                let _ = instance.write().await.delete(id);
+            });
         } else {
             self.periods
                 .write()
@@ -124,7 +133,7 @@ where
                                         .as_secs(),
                             ));
 
-                            let _ = instance.read().unwrap().delete(entry.id);
+                            let _ = instance.write().await.delete(entry.id);
                         });
                     }
                 }
