@@ -10,9 +10,10 @@ use squid::{
 use squid_tokenizer::tokenize;
 use std::{
     ops::Add,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::RwLock;
 use tonic::{transport::Server, Request, Response, Status};
 
 pub mod squid {
@@ -24,7 +25,7 @@ struct SuperSquid {
     instance: Arc<RwLock<squid_db::Instance<models::database::Entity>>>,
 }
 
-const FLUSHTABLE_FLUSH_SIZE_KB: usize = 100; // 100kB.
+const FLUSHTABLE_FLUSH_SIZE_KB: usize = 0; // Insert directly. No memtable.
 
 #[tonic::async_trait]
 impl Squid for SuperSquid {
@@ -80,6 +81,7 @@ impl Squid for SuperSquid {
                 ),
             },
         )
+        .await
         .unwrap();
 
         Ok(Response::new(Void {}))
@@ -153,23 +155,26 @@ async fn main() {
     let instance = db_instance.start_ttl();
 
     // Remove entires to reduce ram usage.
-    instance.write().unwrap().entries.clear();
+    instance.write().await.entries.clear();
 
-    let ctrlc_instance = Arc::clone(&instance);
+    /*let ctrlc_instance = Arc::clone(&instance);
     ctrlc::set_handler(move || {
+        let ctrlc_instance = Arc::clone(&ctrlc_instance);
         if FLUSHTABLE_FLUSH_SIZE_KB > 0 {
             log::info!("Flush memtable...");
-            if let Err(err) = ctrlc_instance.write().unwrap().flush() {
-                log::error!(
-                    "Some data haven't been flushed from memtable: {}",
-                    err
-                );
-            }
+            tokio::task::spawn(async move {
+                if let Err(err) = ctrlc_instance.write().await.flush() {
+                    log::error!(
+                        "Some data haven't been flushed from memtable: {}",
+                        err
+                    );
+                }
+            });
         }
 
         std::process::exit(0);
     })
-    .expect("Failed to set Ctrl+C handler");
+    .expect("Failed to set Ctrl+C handler");*/
 
     let addr = format!("0.0.0.0:{}", config.port.unwrap_or(50051))
         .parse()
