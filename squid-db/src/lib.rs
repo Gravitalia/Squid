@@ -1,16 +1,15 @@
+#![forbid(unsafe_code)]
+#![deny(dead_code, unused_imports, unused_mut, missing_docs)]
 //! # squid-db
 //!
 //! internal database used by Squid to store tokenized texts.
-
-#![forbid(unsafe_code)]
-#![deny(dead_code, unused_imports, unused_mut, missing_docs)]
 
 /// Compresses bytes to reduce size.
 #[cfg(feature = "compress")]
 mod compress;
 mod ttl;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::BTreeMap,
     error::Error,
@@ -21,6 +20,8 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
 };
+use tokio::sync::RwLock as AsyncRwLock;
+use ttl::TTL;
 
 const SOURCE_DIRECTORY: &str = "./data/";
 const FILE_EXT: &str = "bin";
@@ -76,16 +77,25 @@ pub trait Attributes {
 }
 
 /// Structure representing the database world.
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, PartialEq, Debug)]
 pub struct World<T>(pub Vec<T>)
 where
-    T: serde::Serialize + std::marker::Send + std::marker::Sync + 'static;
+    T: serde::Serialize
+        + serde::de::DeserializeOwned
+        + std::marker::Send
+        + std::marker::Sync
+        + 'static;
 
 /// Structure representing one instance of the database.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct Instance<
-    T: serde::Serialize + std::marker::Send + std::marker::Sync + 'static,
+    T: serde::Serialize
+        + serde::de::DeserializeOwned
+        + std::marker::Send
+        + std::marker::Sync
+        + 'static
+        + Attributes,
 > {
     /// File writing new entries.
     /// There is no need to re-open the file each time.
@@ -93,6 +103,8 @@ pub struct Instance<
     /// Index to link an ID to a file.
     /// This allows the file to be targeted for modification or deletion.
     index: BTreeMap<String, String>,
+    /// TTL manager.
+    ttl: Option<Arc<RwLock<TTL<T>>>>,
     /// Data saved on disk.
     pub entries: Vec<T>,
     /// Caching of data to be written to avoid overload and bottlenecks.
@@ -153,6 +165,7 @@ where
                     })
             }),
             index,
+            ttl: None,
             entries: entires.0,
             memtable: Vec::new(),
             memtable_flush_size_in_kb,
@@ -203,17 +216,24 @@ where
     ///     lifetime: 500, // because love only lasts 500 seconds.
     /// });
     /// ```
-    pub fn start_ttl(self) -> Arc<RwLock<Instance<T>>> {
-        let this = Arc::new(RwLock::new(self));
-        let mut ttl_manager = ttl::TTL::new(Arc::clone(&this));
+    pub fn start_ttl(self) -> Arc<AsyncRwLock<Instance<T>>> {
+        let this = Arc::new(AsyncRwLock::new(self));
+        let ttl_manager =
+            Arc::new(RwLock::new(ttl::TTL::new(Arc::clone(&this))));
 
-        for entry in &this.read().unwrap().entries {
-            if let Some(expire) = entry.ttl() {
-                let _ = ttl_manager.add_entry(entry.id(), expire);
+        let (ttl, instance) = (Arc::clone(&ttl_manager), Arc::clone(&this));
+        tokio::task::spawn(async move {
+            for entry in &instance.read().await.entries {
+                if let Some(expire) = entry.ttl() {
+                    let _ = ttl.write().unwrap().add_entry(entry.id(), expire);
+                }
             }
-        }
+        });
 
-        ttl_manager.init();
+        ttl_manager.write().unwrap().init();
+        /*if let Ok(mut writer) = this.write() {
+            writer.ttl = Some(Arc::new(RwLock::new(ttl_manager)));
+        }*/
 
         this
     }
@@ -246,6 +266,14 @@ where
     /// });
     /// ```
     pub fn set(&mut self, data: T) -> Result<(), DbError> {
+        if let Some(timestamp) = data.ttl() {
+            self.ttl
+                .as_ref()
+                .and_then(|ttl| ttl.write().ok())
+                .map(|mut ttl| ttl.add_entry(data.id(), timestamp))
+                .transpose()?;
+        }
+
         match self.memtable_flush_size_in_kb {
             0 => {
                 #[cfg(not(feature = "compress"))]
@@ -299,7 +327,7 @@ where
                 lines.iter().enumerate().for_each(|(i, line)| {
                     if i != index {
                         writeln!(file, "{}", String::from_utf8_lossy(line))
-                            .unwrap();
+                            .unwrap_or_default();
                     }
                 });
             }
