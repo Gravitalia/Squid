@@ -12,6 +12,9 @@ lz4 = { version = "1.24", optional = true }
 serde = { version = "1", features = ["derive"] }
 tokio = "1"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
+tracing = { workspace = true, optional = true }
 
 [features]
+default = ["logging"]
 compress = ["lz4"]
+logging = ["tracing"]
