@@ -276,6 +276,7 @@ where
                 .transpose()?;
         }
 
+        #[cfg(feature = "logging")]
         trace!(id = data.id(), "Added new entry with ID {}.", data.id());
 
         match self.memtable_flush_size_in_kb {
