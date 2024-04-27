@@ -3,6 +3,9 @@
 mod helpers;
 mod models;
 
+#[macro_use]
+extern crate lazy_static;
+
 use squid::{
     squid_server::{Squid, SquidServer},
     {AddRequest, LeaderboardRequest, Ranking, Void, Word},
@@ -27,7 +30,7 @@ struct SuperSquid {
     instance: Arc<RwLock<squid_db::Instance<models::database::Entity>>>,
 }
 
-const FLUSHTABLE_FLUSH_SIZE_KB: usize = 100; // 100kB.
+const FLUSHTABLE_FLUSH_SIZE_KB: usize = 0; // instantly save it.
 
 #[tonic::async_trait]
 impl Squid for SuperSquid {
