@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use std::fs;
+use std::{fs, time::Duration};
 
 fn hashmap_million_benchmark(c: &mut Criterion) {
     let mut map = squid_algorithm::hashtable::MapAlgorithm::default();
@@ -40,7 +40,7 @@ fn hashmap_million_benchmark(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default().sample_size(10).measurement_time(Duration::from_secs(500));
     targets = hashmap_million_benchmark,
 }
 criterion_main!(benches);
