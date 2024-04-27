@@ -15,6 +15,8 @@ use std::{
 };
 use tokio::sync::RwLock;
 use tonic::{transport::Server, Request, Response, Status};
+use tracing::{error, info};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub mod squid {
     tonic::include_proto!("squid");
@@ -25,7 +27,7 @@ struct SuperSquid {
     instance: Arc<RwLock<squid_db::Instance<models::database::Entity>>>,
 }
 
-const FLUSHTABLE_FLUSH_SIZE_KB: usize = 0; // Insert directly. No memtable.
+const FLUSHTABLE_FLUSH_SIZE_KB: usize = 100; // 100kB.
 
 #[tonic::async_trait]
 impl Squid for SuperSquid {
@@ -62,23 +64,26 @@ impl Squid for SuperSquid {
                 original_text: None,
                 post_processing_text: tokenize(&data.sentence).map_err(
                     |error| {
-                        log::error!(
+                        error!(
                             "Failed to tokenize {:?}: {}",
-                            data.sentence,
-                            error
+                            data.sentence, error
                         );
                         Status::invalid_argument("failed to tokenize sentence")
                     },
                 )?,
                 lang: "fr".to_string(),
-                meta: format!(
-                    "expire_at:{}",
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .add(Duration::from_secs(data.lifetime))
-                        .as_secs()
-                ),
+                meta: if data.lifetime == 0 {
+                    String::default()
+                } else {
+                    format!(
+                        "expire_at:{}",
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .add(Duration::from_secs(data.lifetime))
+                            .as_secs()
+                    )
+                },
             },
         )
         .await
@@ -90,36 +95,21 @@ impl Squid for SuperSquid {
 
 #[tokio::main]
 async fn main() {
-    // Set logger with Fern.
-    fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "[{} {}] {}",
-                helpers::format::format_rfc3339(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_secs()
-                ),
-                record.level(),
-                message,
-            ))
-        })
-        .level(if cfg!(debug_assertions) {
-            log::LevelFilter::Trace
-        } else {
-            log::LevelFilter::Info
-        })
-        .chain(std::io::stdout())
-        .apply()
-        .unwrap();
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_file(true)
+                .with_line_number(true)
+                .with_thread_ids(true),
+        )
+        .init();
 
     let config = helpers::config::read();
 
     // Start database.
     let db_instance: squid_db::Instance<models::database::Entity> =
         squid_db::Instance::new(FLUSHTABLE_FLUSH_SIZE_KB).unwrap();
-    log::info!(
+    info!(
         "Loaded instance with {} entities.",
         db_instance.entries.len()
     );
@@ -161,10 +151,10 @@ async fn main() {
     ctrlc::set_handler(move || {
         let ctrlc_instance = Arc::clone(&ctrlc_instance);
         if FLUSHTABLE_FLUSH_SIZE_KB > 0 {
-            log::info!("Flush memtable...");
+            info!("Flush memtable...");
             tokio::task::spawn(async move {
                 if let Err(err) = ctrlc_instance.write().await.flush() {
-                    log::error!(
+                    error!(
                         "Some data haven't been flushed from memtable: {}",
                         err
                     );
@@ -180,7 +170,7 @@ async fn main() {
         .parse()
         .unwrap();
 
-    log::info!("Server started on {}", addr);
+    info!("Server started on {}", addr);
 
     Server::builder()
         .add_service(SquidServer::new(SuperSquid {
