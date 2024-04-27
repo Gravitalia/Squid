@@ -25,6 +25,8 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3"
 ctrlc = "3"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
+regex-lite = "0.1"
+lazy_static = "1"
 
 squid-algorithm = { path = "../squid-algorithm" }
 squid-db = { path = "../squid-db", features = ["logging"] }
