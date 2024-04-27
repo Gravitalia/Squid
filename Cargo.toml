@@ -15,6 +15,9 @@ readme = "README.md"
 edition = "2021"
 license = "Apache-2.0"
 
+[workspace.dependencies]
+tracing = "0.1"
+
 [profile.release]
 opt-level = 3
 lto = true

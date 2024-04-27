@@ -21,13 +21,13 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 
 anyhow = "1"
-fern = "0.6"
-log = "0.4"
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
 ctrlc = "3"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 
 squid-algorithm = { path = "../squid-algorithm" }
-squid-db = { path = "../squid-db" }
+squid-db = { path = "../squid-db", features = ["logging"] }
 squid-tokenizer = { path = "../squid-tokenizer" }
 
 [build-dependencies]
