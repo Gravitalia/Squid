@@ -21,6 +21,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 use tokio::sync::RwLock as AsyncRwLock;
+#[cfg(feature = "logging")]
+use tracing::trace;
 use ttl::TTL;
 
 const SOURCE_DIRECTORY: &str = "./data/";
@@ -68,7 +70,7 @@ impl Error for DbError {}
 pub trait Attributes {
     /// Unique identifier for the sentence.
     fn id(&self) -> String {
-        String::default()
+        uuid::Uuid::new_v4().to_string()
     }
     /// Duration, in seconds, of sentence retention.
     fn ttl(&self) -> Option<u64> {
@@ -274,6 +276,8 @@ where
                 .transpose()?;
         }
 
+        trace!(id = data.id(), "Added new entry with ID {}.", data.id());
+
         match self.memtable_flush_size_in_kb {
             0 => {
                 #[cfg(not(feature = "compress"))]
@@ -330,6 +334,15 @@ where
                             .unwrap_or_default();
                     }
                 });
+
+                #[cfg(feature = "logging")]
+                trace!(
+                    id = id,
+                    file = file_name,
+                    "Entry {} deleted from {}",
+                    id,
+                    file_name
+                );
             }
         } else {
             // TODO: support memtable deletation.
