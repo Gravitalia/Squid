@@ -1,5 +1,10 @@
+use regex_lite::Regex;
 use serde::{Deserialize, Serialize};
 use squid_db::Attributes;
+
+lazy_static! {
+    static ref EXPIRE_AT: Regex = Regex::new(r"expire_at:(\d+)").unwrap();
+}
 
 /// Text representation in the database.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -13,11 +18,15 @@ pub struct Entity {
     pub post_processing_text: String,
     /// The language in which the text is written.
     pub lang: String,
-    /// Text lifetime in seconds.
-    /// After this time it will no longer be taken into account in calculations
-    /// and will be deleted.
+    /// Additional data associated with the entity.
     ///
-    /// Set to 0 for infinite.
+    /// Accepted metatag:
+    /// - `expire_at:<u64>` as TTL. 0 means infinite.
+    /// - `tag:<String>` to specify a field for the sentence.
+    ///
+    /// # Examples
+    /// `expire_at:0,tag:politic`,
+    /// `expire_at:1714240000,tag:sport`
     pub meta: String,
 }
 
@@ -27,10 +36,13 @@ impl Attributes for Entity {
     }
 
     fn ttl(&self) -> Option<u64> {
-        Some(
-            self.meta.split("expire_at:").collect::<Vec<&str>>()[1]
-                .parse()
-                .unwrap_or_default(),
-        )
+        if let Some(expire) = EXPIRE_AT
+            .captures(&self.meta)
+            .and_then(|capture| capture.get(1))
+        {
+            Some(expire.as_str().parse().unwrap_or_default())
+        } else {
+            None
+        }
     }
 }
