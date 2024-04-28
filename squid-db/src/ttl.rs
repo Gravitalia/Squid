@@ -65,17 +65,14 @@ where
 
         if actual_hour >= timestamp {
             // Remove expired entry.
-            /*self.instance
-            .read()
-            .unwrap()
-            .delete(id)
-            .map_err(|_| DbError::FailedWriting)?;*/
+            let instance = Arc::clone(&self.instance);
+            tokio::task::spawn(
+                async move { instance.write().await.delete(id) },
+            );
         } else if actual_hour / SECONDS_IN_HOUR == timestamp / SECONDS_IN_HOUR {
             let instance = Arc::clone(&self.instance);
-
             tokio::task::spawn(async move {
                 sleep(Duration::from_secs(timestamp - actual_hour));
-
                 let _ = instance.write().await.delete(id);
             });
         } else {

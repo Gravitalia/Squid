@@ -102,6 +102,8 @@ pub struct Instance<
     /// File writing new entries.
     /// There is no need to re-open the file each time.
     file: File,
+    /// Opened file UUID.
+    file_name: String,
     /// Index to link an ID to a file.
     /// This allows the file to be targeted for modification or deletion.
     index: BTreeMap<String, String>,
@@ -144,28 +146,29 @@ where
     /// //... then you can do enything with the instance.
     /// ```
     pub fn new(memtable_flush_size_in_kb: usize) -> Result<Self, DbError> {
-        let (entires, index, file) = load::<T>()?;
+        let (entires, index, file, mut file_name) = load::<T>()?;
+
+        let file = file.unwrap_or_else(|| {
+            file_name = uuid::Uuid::new_v4().to_string();
+            let path = PathBuf::from(SOURCE_DIRECTORY)
+                .join(format!("{}.{}", file_name, FILE_EXT));
+
+            OpenOptions::new()
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(&path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "failed to create new file on {}",
+                        path.to_string_lossy()
+                    )
+                })
+        });
 
         Ok(Self {
-            file: file.unwrap_or_else(|| {
-                let path = PathBuf::from(SOURCE_DIRECTORY).join(format!(
-                    "{}.{}",
-                    uuid::Uuid::new_v4(),
-                    FILE_EXT
-                ));
-
-                OpenOptions::new()
-                    .read(true)
-                    .append(true)
-                    .create(true)
-                    .open(&path)
-                    .unwrap_or_else(|_| {
-                        panic!(
-                            "failed to create new file on {}",
-                            path.to_string_lossy()
-                        )
-                    })
-            }),
+            file,
+            file_name,
             index,
             ttl: None,
             entries: entires.0,
@@ -219,7 +222,7 @@ where
     ///
     /// instance.start_ttl();
     /// ```
-    pub fn start_ttl(self) -> Arc<AsyncRwLock<Instance<T>>> {
+    pub async fn start_ttl(self) -> Arc<AsyncRwLock<Instance<T>>> {
         let this = Arc::new(AsyncRwLock::new(self));
         let ttl_manager =
             Arc::new(RwLock::new(ttl::TTL::new(Arc::clone(&this))));
@@ -234,9 +237,7 @@ where
         });
 
         ttl_manager.write().unwrap().init();
-        /*if let Ok(mut writer) = this.write() {
-            writer.ttl = Some(Arc::new(RwLock::new(ttl_manager)));
-        }*/
+        this.write().await.ttl = Some(ttl_manager);
 
         this
     }
@@ -278,7 +279,7 @@ where
         }
 
         #[cfg(feature = "logging")]
-        trace!(id = data.id(), "Added new entry with ID {}.", data.id());
+        trace!(id = data.id(), "Added new entry.");
 
         match self.memtable_flush_size_in_kb {
             0 => {
@@ -286,6 +287,7 @@ where
                 let encoded = bincode::serialize(&data)
                     .map_err(|_| DbError::FailedSerialization)?;
 
+                self.index.insert(data.id(), self.file_name.clone());
                 self.save(&encoded)?
             },
             max_kb_size => {
@@ -303,7 +305,7 @@ where
     }
 
     /// Deletes a record from the data based on its unique identifier.
-    pub fn delete(&self, id: String) -> Result<(), DbError> {
+    pub fn delete(&mut self, id: String) -> Result<(), DbError> {
         if let Some(file_name) = self.index.get(&id) {
             let file =
                 File::open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
@@ -338,18 +340,10 @@ where
                 });
 
                 #[cfg(feature = "logging")]
-                trace!(
-                    id = id,
-                    file = file_name,
-                    "Entry {} deleted from {}",
-                    id,
-                    file_name
-                );
+                trace!(id = id, file = file_name, "Entry deleted.",);
             }
         } else {
-            // TODO: support memtable deletation.
-            //self.memtable.retain(|entry| entry.id() != id);
-            return Err(DbError::Unspecified);
+            self.memtable.retain(|entry| entry.id() != id);
         }
 
         Ok(())
@@ -359,12 +353,7 @@ where
     #[inline(always)]
     #[allow(unused)]
     fn save(&mut self, buf: &[u8]) -> Result<(), DbError> {
-        let reader = io::BufReader::new(&self.file);
-        let mut line_count = 0;
-        for _line in reader.lines() {
-            line_count += 1;
-        }
-
+        let mut line_count = io::BufReader::new(&self.file).lines().count();
         let mut buffer: Vec<u8> = vec![];
 
         buffer.extend_from_slice(buf);
@@ -375,11 +364,9 @@ where
             .map_err(|_| DbError::Unspecified)?;
 
         if line_count + 1 >= MAX_ENTRIES_PER_FILE.into() {
-            let path = PathBuf::from(SOURCE_DIRECTORY).join(format!(
-                "{}.{}",
-                uuid::Uuid::new_v4(),
-                FILE_EXT
-            ));
+            self.file_name = uuid::Uuid::new_v4().to_string();
+            let path = PathBuf::from(SOURCE_DIRECTORY)
+                .join(format!("{}.{}", self.file_name, FILE_EXT));
 
             self.file = OpenOptions::new()
                 .read(true)
@@ -399,11 +386,7 @@ where
 
     /// Saves the data contained in the buffer to the hard disk.
     pub fn flush(&mut self) -> Result<(), DbError> {
-        let reader = io::BufReader::new(&self.file);
-        let mut line_count = 0;
-        for _line in reader.lines() {
-            line_count += 1;
-        }
+        let line_count = io::BufReader::new(&self.file).lines().count();
 
         if line_count + self.memtable.len() > MAX_ENTRIES_PER_FILE.into() {
             // If we just write all, number of lines will exceed maximum allowed.
@@ -412,11 +395,16 @@ where
 
             let mut file_limit = (MAX_ENTRIES_PER_FILE as usize) - line_count;
             for n in 0..file_limit {
+                let data = &self.memtable[n];
+
                 buffer.extend_from_slice(
-                    &bincode::serialize(&self.memtable[n])
+                    &bincode::serialize(&data)
                         .map_err(|_| DbError::FailedSerialization)?,
                 );
                 buffer.extend_from_slice(b"\n");
+
+                // Insert new hard entry into index.
+                self.index.insert(data.id(), self.file_name.clone());
             }
 
             self.file
@@ -424,11 +412,9 @@ where
                 .map_err(|_| DbError::Unspecified)?;
             self.file.flush().map_err(|_| DbError::Unspecified)?;
 
-            let path = PathBuf::from(SOURCE_DIRECTORY).join(format!(
-                "{}.{}",
-                uuid::Uuid::new_v4(),
-                FILE_EXT
-            ));
+            self.file_name = uuid::Uuid::new_v4().to_string();
+            let path = PathBuf::from(SOURCE_DIRECTORY)
+                .join(format!("{}.{}", self.file_name, FILE_EXT));
 
             self.file = OpenOptions::new()
                 .read(true)
@@ -446,12 +432,16 @@ where
                 - (MAX_ENTRIES_PER_FILE as usize))
             {
                 file_limit += 1;
+                let data = &self.memtable[file_limit];
 
                 buffer.extend_from_slice(
-                    &bincode::serialize(&self.memtable[file_limit])
+                    &bincode::serialize(&data)
                         .map_err(|_| DbError::FailedSerialization)?,
                 );
                 buffer.extend_from_slice(b"\n");
+
+                // Insert new hard entry into index.
+                self.index.insert(data.id(), self.file_name.clone());
             }
 
             self.file
@@ -466,6 +456,9 @@ where
                         .map_err(|_| DbError::FailedSerialization)?,
                 );
                 buffer.extend_from_slice(b"\n");
+
+                // Insert new hard entry into index.
+                self.index.insert(data.id(), self.file_name.clone());
             }
 
             self.file
@@ -482,7 +475,7 @@ where
 /// Loads data from the file.
 #[inline(always)]
 fn load<T>(
-) -> Result<(World<T>, BTreeMap<String, String>, Option<File>), DbError>
+) -> Result<(World<T>, BTreeMap<String, String>, Option<File>, String), DbError>
 where
     T: serde::de::DeserializeOwned
         + serde::Serialize
@@ -494,6 +487,7 @@ where
     let mut world: World<T> = World(Vec::new());
     let mut index: BTreeMap<String, String> = BTreeMap::new();
     let mut uncomplete_file: Option<File> = None;
+    let mut file_name = String::default();
 
     let _ = create_dir(SOURCE_DIRECTORY);
 
@@ -528,8 +522,9 @@ where
 
         if file_lines < MAX_ENTRIES_PER_FILE {
             uncomplete_file = Some(file);
+            file_name = entry.file_name().into_string().unwrap_or_default();
         }
     }
 
-    Ok((world, index, uncomplete_file))
+    Ok((world, index, uncomplete_file, file_name))
 }

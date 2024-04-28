@@ -18,8 +18,8 @@ use std::{
 };
 use tokio::sync::RwLock;
 use tonic::{transport::Server, Request, Response, Status};
-use tracing::{error, info};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{error, info, Level};
+use tracing_subscriber::fmt;
 
 pub mod squid {
     tonic::include_proto!("squid");
@@ -98,13 +98,20 @@ impl Squid for SuperSquid {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(
-            fmt::layer()
-                .with_file(true)
-                .with_line_number(true)
-                .with_thread_ids(true),
-        )
+    #[cfg(not(debug_assertions))]
+    fmt()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_max_level(Level::INFO)
+        .init();
+
+    #[cfg(debug_assertions)]
+    fmt()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_max_level(Level::TRACE)
         .init();
 
     let config = helpers::config::read();
@@ -145,10 +152,7 @@ async fn main() {
     }
 
     // Init TTL.
-    let instance = db_instance.start_ttl();
-
-    // Remove entires to reduce ram usage.
-    instance.write().await.entries.clear();
+    let instance = db_instance.start_ttl().await;
 
     /*let ctrlc_instance = Arc::clone(&instance);
     ctrlc::set_handler(move || {
@@ -174,6 +178,9 @@ async fn main() {
         .unwrap();
 
     info!("Server started on {}", addr);
+
+    // Remove entires to reduce ram usage.
+    instance.write().await.entries.clear();
 
     Server::builder()
         .add_service(SquidServer::new(SuperSquid {
