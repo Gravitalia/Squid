@@ -179,7 +179,7 @@ where
     /// This can results in higher memory consumption.
     ///
     /// # Examples
-    /// ```rust
+    /// ```no_run,rust
     /// use serde::{Deserialize, Serialize};
     /// use squid_db::{Instance, Attributes};
     ///
@@ -192,17 +192,16 @@ where
     /// }
     ///
     /// impl Attributes for Entity {
-    ///     fn id(self) -> String {
-    ///         self.id
+    ///     fn id(&self) -> String {
+    ///         self.id.clone()
     ///     }
     ///
-    ///     fn ttl(self) -> Option<u64> {
+    ///     fn ttl(&self) -> Option<u64> {
     ///         Some(self.lifetime)
     ///     }
     /// }
     ///
     /// let mut instance: Instance<Entity> = Instance::new(0).unwrap();
-    /// instance.start_ttl();
     ///
     /// instance.set(Entity {
     ///     id: "U1".to_string(),
@@ -217,6 +216,8 @@ where
     ///     love: true,
     ///     lifetime: 500, // because love only lasts 500 seconds.
     /// });
+    ///
+    /// instance.start_ttl();
     /// ```
     pub fn start_ttl(self) -> Arc<AsyncRwLock<Instance<T>>> {
         let this = Arc::new(AsyncRwLock::new(self));
@@ -311,7 +312,7 @@ where
 
             let lines: Vec<Vec<u8>> = reader
                 .lines()
-                .filter_map(|line| line.ok())
+                .map_while(Result::ok)
                 .map(|entry| entry.as_bytes().to_vec())
                 .collect();
 
