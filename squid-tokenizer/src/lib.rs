@@ -1,25 +1,30 @@
+pub mod stopwords;
+
 use anyhow::Result;
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 /// Lowercase words, remove punctuation, separate words into tokens and convert them into numbers.
 pub fn tokenize<T: ToString>(text: T) -> Result<String> {
+    stopwords::init(Path::new("./stopwords").to_path_buf());
+
     let punctuation: HashSet<char> =
         ['!', ',', '.', ':', ';', '?', '-', '\"', '(', ')']
             .iter()
             .cloned()
             .collect();
 
-    let result_string: String = text
-        .to_string()
-        .replace('\'', " ")
-        .to_lowercase()
-        .chars()
-        .filter(|c| !punctuation.contains(c))
-        .collect::<String>()
-        .split_ascii_whitespace()
-        .filter(|c| *c != " " && c.len() > 1)
-        .map(|c| format!("{} ", c))
-        .collect();
+    let result_string: String = stopwords::remove_words_from_sentence(
+        text.to_string()
+            .replace('\'', " ")
+            .to_lowercase()
+            .chars()
+            .filter(|c| !punctuation.contains(c))
+            .collect::<String>()
+            .split_ascii_whitespace()
+            .filter(|c| *c != " " && c.len() > 1)
+            .map(|c| format!("{} ", c))
+            .collect(),
+    );
 
     let normalize = result_string
         .chars()
