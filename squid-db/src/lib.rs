@@ -20,7 +20,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
 };
-use tokio::sync::RwLock as AsyncRwLock;
+use tokio::sync::{mpsc::Sender, RwLock as AsyncRwLock};
 #[cfg(feature = "logging")]
 use tracing::trace;
 use ttl::TTL;
@@ -72,6 +72,7 @@ pub trait Attributes {
     fn id(&self) -> String {
         uuid::Uuid::new_v4().to_string()
     }
+
     /// Duration, in seconds, of sentence retention.
     fn ttl(&self) -> Option<u64> {
         None
@@ -116,6 +117,9 @@ pub struct Instance<
     /// After how many kb the data is written hard to the disk.
     /// Set to 0 to deactivate the memory table.
     memtable_flush_size_in_kb: usize,
+    /// MPSC consumer used to know expired sentences.
+    /// Created by yourself using [`tokio::sync::mpsc`].
+    sender: Option<Sender<String>>,
     phantom: PhantomData<T>,
 }
 
@@ -174,8 +178,15 @@ where
             entries: entires.0,
             memtable: Vec::new(),
             memtable_flush_size_in_kb,
+            sender: None,
             phantom: PhantomData,
         })
+    }
+
+    /// Set [`tokio::sync::mpsc::Sender`] to send expire
+    /// event in channel.
+    pub fn sender(&mut self, sender: Sender<String>) {
+        self.sender = Some(sender);
     }
 
     /// Start TTL manager.
@@ -229,7 +240,7 @@ where
 
         let (ttl, instance) = (Arc::clone(&ttl_manager), Arc::clone(&this));
         tokio::task::spawn(async move {
-            for entry in &instance.read().await.entries {
+            for entry in &instance.write().await.entries {
                 if let Some(expire) = entry.ttl() {
                     let _ = ttl.write().unwrap().add_entry(entry.id(), expire);
                 }
@@ -240,6 +251,12 @@ where
         this.write().await.ttl = Some(ttl_manager);
 
         this
+    }
+
+    /// d
+    pub fn get(&self, id: String) -> Result<(), DbError> {
+        println!("ID: {} | FILE: {:?}", id, self.index.get(&id));
+        Ok(())
     }
 
     /// Add a new entry to the database.
@@ -305,8 +322,8 @@ where
     }
 
     /// Deletes a record from the data based on its unique identifier.
-    pub fn delete(&mut self, id: String) -> Result<(), DbError> {
-        if let Some(file_name) = self.index.get(&id) {
+    pub fn delete(&mut self, id: &str) -> Result<(), DbError> {
+        if let Some(file_name) = self.index.get(id) {
             let file =
                 File::open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
                     .map_err(|_| DbError::FailedReading)?;
