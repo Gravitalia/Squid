@@ -17,7 +17,7 @@ use std::{
     fs::{create_dir, read_dir, File, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     marker::PhantomData,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
 use tokio::sync::{mpsc::Sender, RwLock as AsyncRwLock};
@@ -27,7 +27,7 @@ use ttl::TTL;
 
 const SOURCE_DIRECTORY: &str = "./data/";
 const FILE_EXT: &str = "bin";
-const MAX_ENTRIES_PER_FILE: u16 = 10_000;
+const MAX_ENTRIES_PER_FILE: usize = 10_000;
 
 /// Database errors.
 #[derive(Debug)]
@@ -119,7 +119,7 @@ pub struct Instance<
     memtable_flush_size_in_kb: usize,
     /// MPSC consumer used to know expired sentences.
     /// Created by yourself using [`tokio::sync::mpsc`].
-    sender: Option<Sender<String>>,
+    sender: Option<Sender<T>>,
     phantom: PhantomData<T>,
 }
 
@@ -185,7 +185,7 @@ where
 
     /// Set [`tokio::sync::mpsc::Sender`] to send expire
     /// event in channel.
-    pub fn sender(&mut self, sender: Sender<String>) {
+    pub fn sender(&mut self, sender: Sender<T>) {
         self.sender = Some(sender);
     }
 
@@ -254,9 +254,14 @@ where
     }
 
     /// d
-    pub fn get(&self, id: String) -> Result<(), DbError> {
-        println!("ID: {} | FILE: {:?}", id, self.index.get(&id));
-        Ok(())
+    pub fn get(&self, id: String) -> Result<Option<T>, DbError> {
+        if let Some(file_name) = self.index.get(&id) {
+            let data = load_file::<T>(file_name.to_string())?.0;
+
+            Ok(data.into_iter().find(|entry| entry.id() == id))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Add a new entry to the database.
@@ -380,7 +385,7 @@ where
             .write_all(&buffer)
             .map_err(|_| DbError::Unspecified)?;
 
-        if line_count + 1 >= MAX_ENTRIES_PER_FILE.into() {
+        if line_count + 1 >= MAX_ENTRIES_PER_FILE {
             self.file_name = uuid::Uuid::new_v4().to_string();
             let path = PathBuf::from(SOURCE_DIRECTORY)
                 .join(format!("{}.{}", self.file_name, FILE_EXT));
@@ -405,12 +410,12 @@ where
     pub fn flush(&mut self) -> Result<(), DbError> {
         let line_count = io::BufReader::new(&self.file).lines().count();
 
-        if line_count + self.memtable.len() > MAX_ENTRIES_PER_FILE.into() {
+        if line_count + self.memtable.len() > MAX_ENTRIES_PER_FILE {
             // If we just write all, number of lines will exceed maximum allowed.
             // So, we will split into two different files.
             let mut buffer: Vec<u8> = Vec::with_capacity(self.memtable.len());
 
-            let mut file_limit = (MAX_ENTRIES_PER_FILE as usize) - line_count;
+            let mut file_limit = MAX_ENTRIES_PER_FILE - line_count;
             for n in 0..file_limit {
                 let data = &self.memtable[n];
 
@@ -445,8 +450,8 @@ where
                     )
                 });
 
-            for _ in 1..(line_count + self.memtable.len()
-                - (MAX_ENTRIES_PER_FILE as usize))
+            for _ in
+                1..(line_count + self.memtable.len() - MAX_ENTRIES_PER_FILE)
             {
                 file_limit += 1;
                 let data = &self.memtable[file_limit];
@@ -489,6 +494,42 @@ where
     }
 }
 
+/// Loads a specific data file rather than the whole set.
+#[inline(always)]
+fn load_file<T>(mut name: String) -> Result<World<T>, DbError>
+where
+    T: serde::de::DeserializeOwned
+        + serde::Serialize
+        + Attributes
+        + std::marker::Send
+        + std::marker::Sync
+        + 'static,
+{
+    if !name.ends_with(FILE_EXT) {
+        name = format!("{}.{}", name, FILE_EXT);
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .open(Path::new(SOURCE_DIRECTORY).join(name))
+        .map_err(|_| DbError::Unspecified)?;
+
+    let reader = BufReader::new(&file);
+    let mut world: World<T> = World(Vec::new());
+
+    for line in reader.lines() {
+        let line_data: T = bincode::deserialize(
+            line.map_err(|_| DbError::FailedReading)?.as_bytes(),
+        )
+        .map_err(|_| DbError::FailedDeserialization)?;
+
+        world.0.push(line_data);
+    }
+
+    Ok(world)
+}
+
 /// Loads data from the file.
 #[inline(always)]
 fn load<T>(
@@ -513,34 +554,25 @@ where
         .collect::<Result<Vec<_>, io::Error>>()
         .map_err(|_| DbError::FailedReading)?
     {
-        let file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(entry.path())
-            .map_err(|_| DbError::Unspecified)?;
+        let filename = entry.file_name().into_string().unwrap_or_default();
+        let mut data: Vec<T> = load_file(filename.to_string())?.0;
 
-        let reader = BufReader::new(&file);
-        let mut file_lines: u16 = 0;
-
-        for line in reader.lines() {
-            file_lines += 1;
-
-            let line_data: T = bincode::deserialize(
-                line.map_err(|_| DbError::FailedReading)?.as_bytes(),
-            )
-            .map_err(|_| DbError::FailedDeserialization)?;
-
-            index.insert(
-                line_data.id(),
-                entry.file_name().into_string().unwrap_or_default(),
-            );
-            world.0.push(line_data);
+        for line in &data {
+            index.insert(line.id(), filename.clone());
         }
 
-        if file_lines < MAX_ENTRIES_PER_FILE {
-            uncomplete_file = Some(file);
+        if data.len() < MAX_ENTRIES_PER_FILE {
+            uncomplete_file = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(&Path::new(SOURCE_DIRECTORY).join(filename))
+                    .map_err(|_| DbError::Unspecified)?,
+            );
             file_name = entry.file_name().into_string().unwrap_or_default();
         }
+
+        world.0.append(&mut data);
     }
 
     Ok((world, index, uncomplete_file, file_name))
