@@ -66,14 +66,29 @@ where
         if actual_hour >= timestamp {
             // Remove expired entry.
             let instance = Arc::clone(&self.instance);
-            tokio::task::spawn(
-                async move { instance.write().await.delete(id) },
-            );
+            tokio::task::spawn(async move {
+                if let Some(sender) = &instance.read().await.sender {
+                    if let Ok(Some(data)) =
+                        instance.read().await.get(id.clone())
+                    {
+                        let _ = sender.send(data).await;
+                    }
+                }
+                let _ = instance.write().await.delete(&id);
+            });
         } else if actual_hour / SECONDS_IN_HOUR == timestamp / SECONDS_IN_HOUR {
             let instance = Arc::clone(&self.instance);
             tokio::task::spawn(async move {
                 sleep(Duration::from_secs(timestamp - actual_hour));
-                let _ = instance.write().await.delete(id);
+
+                if let Some(sender) = &instance.read().await.sender {
+                    if let Ok(Some(data)) =
+                        instance.read().await.get(id.clone())
+                    {
+                        let _ = sender.send(data).await;
+                    }
+                }
+                let _ = instance.write().await.delete(&id);
             });
         } else {
             self.periods
@@ -130,7 +145,15 @@ where
                                         .as_secs(),
                             ));
 
-                            let _ = instance.write().await.delete(entry.id);
+                            if let Some(sender) = &instance.read().await.sender
+                            {
+                                if let Ok(Some(data)) =
+                                    instance.read().await.get(entry.id.clone())
+                                {
+                                    let _ = sender.send(data).await;
+                                }
+                            }
+                            let _ = instance.write().await.delete(&entry.id);
                         });
                     }
                 }

@@ -1,20 +1,19 @@
 use crate::models::database::Entity;
-use anyhow::Result;
 use squid_algorithm::hashtable::MapAlgorithm;
-use squid_db::Instance;
+use squid_db::{DbError, Instance};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// The algorithms managed by Squid.
 #[derive(Debug, Clone)]
 pub enum Algorithm {
-    Map(MapAlgorithm),
+    Map(Arc<RwLock<MapAlgorithm>>),
 }
 
 impl From<MapAlgorithm> for Algorithm {
     /// Implements conversion from a MapAlgorithm to Algorithm.
     fn from(map: MapAlgorithm) -> Self {
-        Algorithm::Map(map)
+        Algorithm::Map(Arc::new(RwLock::new(map)))
     }
 }
 
@@ -24,25 +23,25 @@ pub async fn set<A: Into<Algorithm>>(
     instance: Arc<RwLock<Instance<Entity>>>,
     algorithm: A,
     value: Entity,
-) -> Result<()> {
+) -> Result<(), DbError> {
     instance.write().await.set(value.clone())?;
 
     match algorithm.into() {
-        Algorithm::Map(mut implementation) => {
+        Algorithm::Map(implementation) => {
             for str in value.post_processing_text.split_whitespace() {
                 if !config.service.exclude.contains(&str.to_string()) {
                     match config.service.message_type {
                         crate::models::config::MessageType::Hashtag => {
                             if str.starts_with('#') {
-                                implementation.set(str)
+                                implementation.write().await.set(str)
                             }
                         },
                         crate::models::config::MessageType::Word => {
                             if !str.starts_with('#') {
-                                implementation.set(str)
+                                implementation.write().await.set(str)
                             }
                         },
-                        _ => implementation.set(str),
+                        _ => implementation.write().await.set(str),
                     }
                 }
             }
@@ -52,12 +51,24 @@ pub async fn set<A: Into<Algorithm>>(
     Ok(())
 }
 
+/// Removes a value to the algorithm.
+pub async fn _remove<A: Into<Algorithm>>(
+    algorithm: A,
+    key: String,
+) -> Result<(), DbError> {
+    match algorithm.into() {
+        Algorithm::Map(implementation) => implementation.write().await.remove(key),
+    }
+
+    Ok(())
+}
+
 /// Rank the most used words.
-pub fn rank<A: Into<Algorithm>>(
+pub async fn rank<A: Into<Algorithm>>(
     algorithm: A,
     length: usize,
 ) -> Vec<(String, usize)> {
     match algorithm.into() {
-        Algorithm::Map(implementation) => implementation.rank(length),
+        Algorithm::Map(implementation) => implementation.read().await.rank(length),
     }
 }
