@@ -21,6 +21,20 @@ impl MapAlgorithm {
             .or_insert(1);
     }
 
+    /// Removes data from the data contained in the HashMap.
+    pub fn remove<T>(&mut self, key: T)
+    where
+        T: ToString,
+    {
+        if let Some(count) = self.data.get_mut(&key.to_string()) {
+            if *count > 1 {
+                *count -= 1;
+            } else {
+                self.data.remove(&key.to_string());
+            }
+        }
+    }
+
     /// Classify the most frequently used words.
     pub fn rank(&self, length: usize) -> Vec<(String, usize)> {
         let mut sorted_word_counts: Vec<_> =
