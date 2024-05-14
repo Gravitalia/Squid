@@ -6,6 +6,7 @@ mod models;
 #[macro_use]
 extern crate lazy_static;
 
+use crate::models::database::Entity;
 use squid::{
     squid_server::{Squid, SquidServer},
     {AddRequest, LeaderboardRequest, Ranking, Void, Word},
@@ -16,7 +17,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{error, info, Level};
 use tracing_subscriber::fmt;
@@ -43,6 +44,7 @@ impl Squid for SuperSquid {
                 self.algorithm.clone(),
                 request.into_inner().length as usize,
             )
+            .await
             .iter()
             .map(|(word, occurence)| Word {
                 word: word.to_string(),
@@ -117,35 +119,50 @@ async fn main() {
     let config = helpers::config::read();
 
     // Start database.
-    let db_instance: squid_db::Instance<models::database::Entity> =
+    let mut db_instance: squid_db::Instance<Entity> =
         squid_db::Instance::new(FLUSHTABLE_FLUSH_SIZE_KB).unwrap();
     info!(
         "Loaded instance with {} entities.",
         db_instance.entries.len()
     );
 
+    // Set producer channel to receive expired sentences.
+    let (tx, mut rx) = mpsc::channel::<Entity>(2305843009213693951);
+    db_instance.sender(tx);
+
     // Chose algorithm.
-    let mut algo = match config.service.algorithm {
+    let algo = Arc::new(RwLock::new(match config.service.algorithm {
         models::config::Algorithm::Hashmap => {
             squid_algorithm::hashtable::MapAlgorithm::default()
         },
-    };
+    }));
 
+    // Init MPSC consumer.
+    let ttl_algo = Arc::clone(&algo);
+    tokio::task::spawn(async move {
+        while let Some(data) = rx.recv().await {
+            for word in data.post_processing_text.split_ascii_whitespace() {
+                let _ = ttl_algo.write().await.remove(word);
+            }
+        }
+    });
+
+    // Add each words to algorithm.
     for data in &db_instance.entries {
         for str in data.post_processing_text.split_whitespace() {
             if !config.service.exclude.contains(&str.to_string()) {
                 match config.service.message_type {
                     models::config::MessageType::Hashtag => {
                         if str.starts_with('#') {
-                            algo.set(str)
+                            algo.write().await.set(str)
                         }
                     },
                     models::config::MessageType::Word => {
                         if !str.starts_with('#') {
-                            algo.set(str)
+                            algo.write().await.set(str)
                         }
                     },
-                    _ => algo.set(str),
+                    _ => algo.write().await.set(str),
                 }
             }
         }
