@@ -142,7 +142,7 @@ async fn main() {
     tokio::task::spawn(async move {
         while let Some(data) = rx.recv().await {
             for word in data.post_processing_text.split_ascii_whitespace() {
-                let _ = ttl_algo.write().await.remove(word);
+                ttl_algo.write().await.remove(word);
             }
         }
     });
