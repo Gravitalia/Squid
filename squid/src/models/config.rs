@@ -34,7 +34,7 @@ pub struct Service {
     #[serde(default)]
     pub algorithm: Algorithm,
     /// The maximum number of words returned for a query.
-    max_words: Option<usize>,
+    max_words: Option<u8>,
     /// What data the algorithm needs to cache.
     #[serde(default)]
     pub message_type: MessageType,

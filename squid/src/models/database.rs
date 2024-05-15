@@ -36,13 +36,9 @@ impl Attributes for Entity {
     }
 
     fn ttl(&self) -> Option<u64> {
-        if let Some(expire) = EXPIRE_AT
+        EXPIRE_AT
             .captures(&self.meta)
             .and_then(|capture| capture.get(1))
-        {
-            Some(expire.as_str().parse().unwrap_or_default())
-        } else {
-            None
-        }
+            .map(|expire| expire.as_str().parse().unwrap_or_default())
     }
 }
