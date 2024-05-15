@@ -5,6 +5,7 @@ members = [
     "squid",
     "squid-algorithm",
     "squid-db",
+    "squid-error",
     "squid-tokenizer",
 ]
 
