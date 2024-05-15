@@ -1,6 +1,7 @@
 use crate::models::database::Entity;
 use squid_algorithm::hashtable::MapAlgorithm;
-use squid_db::{DbError, Instance};
+use squid_db::Instance;
+use squid_error::Error;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -23,7 +24,7 @@ pub async fn set<A: Into<Algorithm>>(
     instance: Arc<RwLock<Instance<Entity>>>,
     algorithm: A,
     value: Entity,
-) -> Result<(), DbError> {
+) -> Result<(), Error> {
     instance.write().await.set(value.clone())?;
 
     match algorithm.into() {
@@ -55,9 +56,11 @@ pub async fn set<A: Into<Algorithm>>(
 pub async fn _remove<A: Into<Algorithm>>(
     algorithm: A,
     key: String,
-) -> Result<(), DbError> {
+) -> Result<(), Error> {
     match algorithm.into() {
-        Algorithm::Map(implementation) => implementation.write().await.remove(key),
+        Algorithm::Map(implementation) => {
+            implementation.write().await.remove(key)
+        },
     }
 
     Ok(())
@@ -69,6 +72,8 @@ pub async fn rank<A: Into<Algorithm>>(
     length: usize,
 ) -> Vec<(String, usize)> {
     match algorithm.into() {
-        Algorithm::Map(implementation) => implementation.read().await.rank(length),
+        Algorithm::Map(implementation) => {
+            implementation.read().await.rank(length)
+        },
     }
 }

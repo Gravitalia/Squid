@@ -30,6 +30,7 @@ lazy_static = "1"
 squid-algorithm = { path = "../squid-algorithm" }
 squid-db = { path = "../squid-db", features = ["logging"] }
 squid-tokenizer = { path = "../squid-tokenizer" }
+squid-error = { path = "../squid-error" }
 
 [build-dependencies]
 tonic-build = { version = "0.11", features = ["prost"] }
