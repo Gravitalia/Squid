@@ -6,7 +6,8 @@
 //! current hour, a task is launched to delete the expired recording to the
 //! nearest second.
 
-use crate::{Attributes, DbError, Instance};
+use crate::{Attributes, Instance};
+use squid_error::Error;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -57,7 +58,7 @@ where
         &mut self,
         id: String,
         timestamp: u64,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), Error> {
         let actual_hour = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -93,7 +94,15 @@ where
         } else {
             self.periods
                 .write()
-                .map_err(|_| DbError::FailedWriting)?
+                .map_err(|_| {
+                    Error::new(
+                        squid_error::ErrorType::InputOutput(
+                            squid_error::IoError::WritingError,
+                        ),
+                        None,
+                        Some("cannot get `periods`".to_string()),
+                    )
+                })?
                 .entry(timestamp / SECONDS_IN_HOUR)
                 .and_modify(|e| {
                     e.push(Entry {
@@ -129,7 +138,15 @@ where
 
                 if let Some(timers) = periods
                     .read()
-                    .map_err(|_| DbError::FailedReading)?
+                    .map_err(|_| {
+                        Error::new(
+                            squid_error::ErrorType::InputOutput(
+                                squid_error::IoError::WritingError,
+                            ),
+                            None,
+                            Some("cannot get `periods`".to_string()),
+                        )
+                    })?
                     .get(&(now / SECONDS_IN_HOUR))
                 {
                     for timer in timers {
@@ -159,7 +176,7 @@ where
                 }
             }
 
-            Ok::<(), DbError>(())
+            Ok::<(), Error>(())
         });
     }
 

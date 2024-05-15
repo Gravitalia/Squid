@@ -10,10 +10,9 @@ mod compress;
 mod ttl;
 
 use serde::Serialize;
+use squid_error::{Error, ErrorType, IoError};
 use std::{
     collections::BTreeMap,
-    error::Error,
-    fmt,
     fs::{create_dir, read_dir, File, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     marker::PhantomData,
@@ -28,43 +27,6 @@ use ttl::TTL;
 const SOURCE_DIRECTORY: &str = "./data/";
 const FILE_EXT: &str = "bin";
 const MAX_ENTRIES_PER_FILE: usize = 10_000;
-
-/// Database errors.
-#[derive(Debug)]
-pub enum DbError {
-    /// Main directory haven't been created.
-    DirCreationFailed,
-    /// An error with absolutely no details.
-    Unspecified,
-    /// The compression failed.
-    #[cfg(feature = "compress")]
-    FailedCompression,
-    /// The deserialization failed.
-    FailedDeserialization,
-    /// The serialization failed.
-    FailedSerialization,
-    /// Error while reading data.
-    FailedReading,
-    /// Failed unwrap Rwlock or Mutex for writing.
-    FailedWriting,
-}
-
-impl fmt::Display for DbError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            DbError::DirCreationFailed => write!(f, "The directory could not be created."),
-            DbError::Unspecified => write!(f, "Unknown error"),
-            #[cfg(feature = "compress")]
-            DbError::FailedCompression => write!(f, "An error occurred during compression"),
-            DbError::FailedDeserialization => write!(f, "An error occurred during deserialization"),
-            DbError::FailedSerialization => write!(f, "An error occurred during serialization, check the serde implementation"),
-            DbError::FailedReading => write!(f, "The data was not read correctly"),
-            DbError::FailedWriting => write!(f, "Cannot get Rwlock write"),
-        }
-    }
-}
-
-impl Error for DbError {}
 
 /// Attributes required for TTL management.
 pub trait Attributes {
@@ -149,7 +111,7 @@ where
     /// let instance: Instance<Entity> = Instance::new(0).unwrap();
     /// //... then you can do enything with the instance.
     /// ```
-    pub fn new(memtable_flush_size_in_kb: usize) -> Result<Self, DbError> {
+    pub fn new(memtable_flush_size_in_kb: usize) -> Result<Self, Error> {
         let (entires, index, file, mut file_name) = load::<T>()?;
 
         let file = file.unwrap_or_else(|| {
@@ -254,7 +216,7 @@ where
     }
 
     /// d
-    pub fn get(&self, id: String) -> Result<Option<T>, DbError> {
+    pub fn get(&self, id: String) -> Result<Option<T>, Error> {
         if let Some(file_name) = self.index.get(&id) {
             let data = load_file::<T>(file_name.to_string())?.0;
 
@@ -291,7 +253,7 @@ where
     ///     love_him: true,
     /// });
     /// ```
-    pub fn set(&mut self, data: T) -> Result<(), DbError> {
+    pub fn set(&mut self, data: T) -> Result<(), Error> {
         if let Some(timestamp) = data.ttl() {
             self.ttl
                 .as_ref()
@@ -306,8 +268,16 @@ where
         match self.memtable_flush_size_in_kb {
             0 => {
                 #[cfg(not(feature = "compress"))]
-                let encoded = bincode::serialize(&data)
-                    .map_err(|_| DbError::FailedSerialization)?;
+                let encoded = bincode::serialize(&data).map_err(|error| {
+                    Error::new(
+                        ErrorType::InputOutput(IoError::DeserializationError),
+                        Some(error),
+                        Some(
+                            "during `bincode` serialization to set new entry"
+                                .to_string(),
+                        ),
+                    )
+                })?;
 
                 self.index.insert(data.id(), self.file_name.clone());
                 self.save(&encoded)?
@@ -318,7 +288,13 @@ where
                 if max_kb_size
                     < (self.memtable.len() * std::mem::size_of::<T>()) / 1000
                 {
-                    self.flush().map_err(|_| DbError::Unspecified)?
+                    self.flush().map_err(|error| {
+                        Error::new(
+                            ErrorType::Unspecified,
+                            Some(Box::new(error)),
+                            Some("while flushing database".to_string()),
+                        )
+                    })?
                 }
             },
         }
@@ -327,11 +303,19 @@ where
     }
 
     /// Deletes a record from the data based on its unique identifier.
-    pub fn delete(&mut self, id: &str) -> Result<(), DbError> {
+    pub fn delete(&mut self, id: &str) -> Result<(), Error> {
         if let Some(file_name) = self.index.get(id) {
             let file =
                 File::open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
-                    .map_err(|_| DbError::FailedReading)?;
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorType::InputOutput(IoError::ReadingError),
+                            Some(Box::new(error)),
+                            Some(
+                                "cannot open file to delete entry".to_string(),
+                            ),
+                        )
+                    })?;
             let reader = BufReader::new(file);
 
             let lines: Vec<Vec<u8>> = reader
@@ -352,7 +336,15 @@ where
                     .write(true)
                     .truncate(true)
                     .open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
-                    .map_err(|_| DbError::Unspecified)?;
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorType::Unspecified,
+                            Some(Box::new(error)),
+                            Some(
+                                "during file opening to delete row".to_string(),
+                            ),
+                        )
+                    })?;
 
                 lines.iter().enumerate().for_each(|(i, line)| {
                     if i != index {
@@ -374,16 +366,20 @@ where
     /// Append one data to the file.
     #[inline(always)]
     #[allow(unused)]
-    fn save(&mut self, buf: &[u8]) -> Result<(), DbError> {
+    fn save(&mut self, buf: &[u8]) -> Result<(), Error> {
         let mut line_count = io::BufReader::new(&self.file).lines().count();
         let mut buffer: Vec<u8> = vec![];
 
         buffer.extend_from_slice(buf);
         buffer.extend_from_slice(b"\n");
 
-        self.file
-            .write_all(&buffer)
-            .map_err(|_| DbError::Unspecified)?;
+        self.file.write_all(&buffer).map_err(|error| {
+            Error::new(
+                ErrorType::Unspecified,
+                Some(Box::new(error)),
+                Some("saving context".to_string()),
+            )
+        })?;
 
         if line_count + 1 >= MAX_ENTRIES_PER_FILE {
             self.file_name = uuid::Uuid::new_v4().to_string();
@@ -407,7 +403,7 @@ where
     }
 
     /// Saves the data contained in the buffer to the hard disk.
-    pub fn flush(&mut self) -> Result<(), DbError> {
+    pub fn flush(&mut self) -> Result<(), Error> {
         let line_count = io::BufReader::new(&self.file).lines().count();
 
         if line_count + self.memtable.len() > MAX_ENTRIES_PER_FILE {
@@ -419,20 +415,38 @@ where
             for n in 0..file_limit {
                 let data = &self.memtable[n];
 
-                buffer.extend_from_slice(
-                    &bincode::serialize(&data)
-                        .map_err(|_| DbError::FailedSerialization)?,
-                );
+                buffer.extend_from_slice(&bincode::serialize(&data).map_err(
+                    |error| {
+                        Error::new(
+                            ErrorType::InputOutput(IoError::SerializationError),
+                            Some(Box::new(error)),
+                            Some(
+                                "cannot serialize to flush database"
+                                    .to_string(),
+                            ),
+                        )
+                    },
+                )?);
                 buffer.extend_from_slice(b"\n");
 
                 // Insert new hard entry into index.
                 self.index.insert(data.id(), self.file_name.clone());
             }
 
-            self.file
-                .write_all(&buffer)
-                .map_err(|_| DbError::Unspecified)?;
-            self.file.flush().map_err(|_| DbError::Unspecified)?;
+            self.file.write_all(&buffer).map_err(|error| {
+                Error::new(
+                    ErrorType::Unspecified,
+                    Some(Box::new(error)),
+                    Some("flush writing".to_string()),
+                )
+            })?;
+            self.file.flush().map_err(|error| {
+                Error::new(
+                    ErrorType::Unspecified,
+                    Some(Box::new(error)),
+                    Some("re-flush on flush over flush".to_string()),
+                )
+            })?;
 
             self.file_name = uuid::Uuid::new_v4().to_string();
             let path = PathBuf::from(SOURCE_DIRECTORY)
@@ -456,36 +470,60 @@ where
                 file_limit += 1;
                 let data = &self.memtable[file_limit];
 
-                buffer.extend_from_slice(
-                    &bincode::serialize(&data)
-                        .map_err(|_| DbError::FailedSerialization)?,
-                );
+                buffer.extend_from_slice(&bincode::serialize(&data).map_err(
+                    |error| {
+                        Error::new(
+                            ErrorType::InputOutput(IoError::SerializationError),
+                            Some(Box::new(error)),
+                            Some(
+                                "cannot serialize to flush database"
+                                    .to_string(),
+                            ),
+                        )
+                    },
+                )?);
                 buffer.extend_from_slice(b"\n");
 
                 // Insert new hard entry into index.
                 self.index.insert(data.id(), self.file_name.clone());
             }
 
-            self.file
-                .write_all(&buffer)
-                .map_err(|_| DbError::Unspecified)?;
+            self.file.write_all(&buffer).map_err(|error| {
+                Error::new(
+                    ErrorType::Unspecified,
+                    Some(Box::new(error)),
+                    Some("flush writing".to_string()),
+                )
+            })?;
         } else {
             let mut buffer: Vec<u8> = Vec::with_capacity(self.memtable.len());
 
             for data in &self.memtable {
-                buffer.extend_from_slice(
-                    &bincode::serialize(&data)
-                        .map_err(|_| DbError::FailedSerialization)?,
-                );
+                buffer.extend_from_slice(&bincode::serialize(&data).map_err(
+                    |error| {
+                        Error::new(
+                            ErrorType::InputOutput(IoError::SerializationError),
+                            Some(Box::new(error)),
+                            Some(
+                                "cannot serialize to flush database"
+                                    .to_string(),
+                            ),
+                        )
+                    },
+                )?);
                 buffer.extend_from_slice(b"\n");
 
                 // Insert new hard entry into index.
                 self.index.insert(data.id(), self.file_name.clone());
             }
 
-            self.file
-                .write_all(&buffer)
-                .map_err(|_| DbError::Unspecified)?;
+            self.file.write_all(&buffer).map_err(|error| {
+                Error::new(
+                    ErrorType::Unspecified,
+                    Some(Box::new(error)),
+                    Some("again flush writing".to_string()),
+                )
+            })?;
 
             self.memtable.clear();
         }
@@ -496,7 +534,7 @@ where
 
 /// Loads a specific data file rather than the whole set.
 #[inline(always)]
-fn load_file<T>(mut name: String) -> Result<World<T>, DbError>
+fn load_file<T>(mut name: String) -> Result<World<T>, Error>
 where
     T: serde::de::DeserializeOwned
         + serde::Serialize
@@ -513,16 +551,35 @@ where
         .read(true)
         .append(true)
         .open(Path::new(SOURCE_DIRECTORY).join(name))
-        .map_err(|_| DbError::Unspecified)?;
+        .map_err(|error| {
+            Error::new(
+                ErrorType::Unspecified,
+                Some(Box::new(error)),
+                Some("while opening file".to_string()),
+            )
+        })?;
 
     let reader = BufReader::new(&file);
     let mut world: World<T> = World(Vec::new());
 
     for line in reader.lines() {
         let line_data: T = bincode::deserialize(
-            line.map_err(|_| DbError::FailedReading)?.as_bytes(),
+            line.map_err(|error| {
+                Error::new(
+                    ErrorType::InputOutput(IoError::ReadingError),
+                    Some(Box::new(error)),
+                    Some("cannot read line before deserialization".to_string()),
+                )
+            })?
+            .as_bytes(),
         )
-        .map_err(|_| DbError::FailedDeserialization)?;
+        .map_err(|error| {
+            Error::new(
+                ErrorType::InputOutput(IoError::DeserializationError),
+                Some(Box::new(error)),
+                Some("cannot serialize to read file".to_string()),
+            )
+        })?;
 
         world.0.push(line_data);
     }
@@ -533,7 +590,7 @@ where
 /// Loads data from the file.
 #[inline(always)]
 fn load<T>(
-) -> Result<(World<T>, BTreeMap<String, String>, Option<File>, String), DbError>
+) -> Result<(World<T>, BTreeMap<String, String>, Option<File>, String), Error>
 where
     T: serde::de::DeserializeOwned
         + serde::Serialize
@@ -550,9 +607,21 @@ where
     let _ = create_dir(SOURCE_DIRECTORY);
 
     for entry in read_dir(SOURCE_DIRECTORY)
-        .map_err(|_| DbError::FailedReading)?
+        .map_err(|error| {
+            Error::new(
+                ErrorType::InputOutput(IoError::WritingError),
+                Some(Box::new(error)),
+                Some("cannot read data dir".to_string()),
+            )
+        })?
         .collect::<Result<Vec<_>, io::Error>>()
-        .map_err(|_| DbError::FailedReading)?
+        .map_err(|error| {
+            Error::new(
+                ErrorType::InputOutput(IoError::ReadingError),
+                Some(Box::new(error)),
+                Some("cannot convert into vector".to_string()),
+            )
+        })?
     {
         let filename = entry.file_name().into_string().unwrap_or_default();
         let mut data: Vec<T> = load_file(filename.to_string())?.0;
@@ -567,7 +636,13 @@ where
                     .read(true)
                     .append(true)
                     .open(&Path::new(SOURCE_DIRECTORY).join(filename))
-                    .map_err(|_| DbError::Unspecified)?,
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorType::Unspecified,
+                            Some(Box::new(error)),
+                            Some("while opening file to load it".to_string()),
+                        )
+                    })?,
             );
             file_name = entry.file_name().into_string().unwrap_or_default();
         }
