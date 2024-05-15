@@ -15,6 +15,7 @@ proto_library(
 
 CUSTOM_CRATES = [
     "//squid-algorithm",
+    "//squid-error",
     "//squid-db",
     "//squid-tokenizer",
     ":proto_build_script",

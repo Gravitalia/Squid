@@ -42,6 +42,7 @@ crate.from_cargo(
         "//squid:Cargo.toml",
         "//squid-algorithm:Cargo.toml",
         "//squid-db:Cargo.toml",
+        "//squid-error:Cargo.toml",
         "//squid-tokenizer:Cargo.toml",
     ],
 )

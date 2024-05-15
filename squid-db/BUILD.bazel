@@ -3,11 +3,15 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+CUSTOM_CRATES = [
+    "//squid-error",
+]
+
 rust_library(
     name = "squid-db",
     srcs = glob(["src/**/*.rs"]),
     aliases = aliases(),
-    deps = all_crate_deps(
+    deps = CUSTOM_CRATES + all_crate_deps(
         normal = True,
     ),
     proc_macro_deps = all_crate_deps(
@@ -27,7 +31,7 @@ rust_library(
 rust_test(
     name = "squid-db_test",
     crate = ":squid-db",
-    deps = all_crate_deps(
+    deps = CUSTOM_CRATES + all_crate_deps(
         normal_dev = True,
     ),
     proc_macro_deps = all_crate_deps(
