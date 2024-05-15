@@ -19,7 +19,7 @@ async fn main() {
         .open("./wikisent2.txt")
         .unwrap();
 
-    file.write(resp.as_ref()).unwrap();
+    file.write_all(resp.as_ref()).unwrap();
 
     // Decompress it.
     /*let mut archive = zip::ZipArchive::new(file).unwrap();
