@@ -25,7 +25,7 @@ pub async fn set<A: Into<Algorithm>>(
     algorithm: A,
     value: Entity,
 ) -> Result<(), Error> {
-    instance.write().await.set(value.clone())?;
+    instance.write().await.set(value.clone()).await?;
 
     match algorithm.into() {
         Algorithm::Map(implementation) => {
