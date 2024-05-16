@@ -176,6 +176,7 @@ where
             }
 
             ttl.read().await.init();
+            instance.write().await.ttl(ttl);
         }
 
         Ok(instance)
