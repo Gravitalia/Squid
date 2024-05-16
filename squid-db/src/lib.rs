@@ -1,79 +1,49 @@
-//! Handle time to live (TTL) from saved sentences.
+#![forbid(unsafe_code)]
+#![deny(dead_code, unused_imports, unused_mut, missing_docs)]
+//! # squid-db
 //!
-//! It divides the sentences to be deleted in this hour into time blocks.
-//!
-//! After a periodic check, usually every hour, if there are recordings in the
-//! current hour, a task is launched to delete the expired recording to the
-//! nearest second.
-//!
-//! # Examples
-//! ```no_run,rust
-//! use serde::{Deserialize, Serialize};
-//! use squid_db::{Builder, Attributes};
-//!
-//! #[derive(Serialize, Deserialize, Default)]
-//! struct Entity {
-//!     id: String,
-//!     data: String,
-//!     love: bool,
-//!     lifetime: u64,
-//! }
-//!
-//! impl Attributes for Entity {
-//!     fn id(&self) -> String {
-//!         self.id.clone()
-//!     }
-//!
-//!     fn ttl(&self) -> Option<u64> {
-//!         Some(self.lifetime)
-//!     }
-//! }
-//! 
-//! #[tokio::main]
-//! async fn main() {
-//!     let instance = Builder::default()
-//!         .with_ttl()
-//!         .build()
-//!         .await
-//!         .unwrap();
-//!
-//!     instance.write().await.set(Entity {
-//!         id: "U1".to_string(),
-//!         data: "I do not know if my french teacher like me...".to_string(),
-//!         love: false,
-//!         lifetime: 0, // permanent sentence.
-//!     }).await;
-//!
-//!     instance.write().await.set(Entity {
-//!         id: "U2".to_string(),
-//!         data: "It starts with A! My love?".to_string(),
-//!         love: true,
-//!         lifetime: 500, // because love only lasts 500 seconds.
-//!     }).await;
-//! }
-//! ```
+//! internal database used by Squid to store tokenized texts.
 
-use crate::{Attributes, Instance};
-use squid_error::Error;
+#[cfg(feature = "compress")]
+mod compress;
+mod manager;
+mod ttl;
+
+pub use manager::Instance;
+
+use ttl::TTL;
+use crate::manager::World;
+use squid_error::{Error, ErrorType, IoError};
 use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-    thread::sleep,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    collections::BTreeMap,
+    fs::{create_dir, read_dir, File, OpenOptions},
+    io::{self, BufRead, BufReader},
+    marker::PhantomData,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
-use tokio::sync::RwLock as AsyncRwLock;
+use tokio::sync::{mpsc::Sender, RwLock};
 
-const SECONDS_IN_HOUR: u64 = 3600;
+const SOURCE_DIRECTORY: &str = "./data/";
+const FILE_EXT: &str = "bin";
+const MAX_ENTRIES_PER_FILE: usize = 10_000;
 
-#[derive(Debug, Clone)]
-#[allow(unused)]
-struct Entry {
-    id: String,
-    exact_expiration: u64,
+/// Attributes required for TTL management.
+pub trait Attributes {
+    /// Unique identifier for the sentence.
+    fn id(&self) -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
+    /// Duration, in seconds, of sentence retention.
+    fn ttl(&self) -> Option<u64> {
+        None
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct TTL<
+/// [`Builder`] handle database creation.
+#[derive(Default)]
+pub struct Builder<
     T: serde::Serialize
         + serde::de::DeserializeOwned
         + Attributes
@@ -81,11 +51,18 @@ pub struct TTL<
         + std::marker::Sync
         + 'static,
 > {
-    periods: Arc<RwLock<HashMap<u64, Vec<Entry>>>>,
-    instance: Arc<AsyncRwLock<Instance<T>>>,
+    /// Database name.
+    _name: String,
+    /// After how many kb the data is written hard to the disk.
+    memtable_flush_size_in_kb: usize,
+    /// Async MPSC sender.
+    sender: Option<Sender<T>>,
+    /// Is TTL manager is enabled.
+    ttl: bool,
+    phantom: PhantomData<T>,
 }
 
-impl<T> TTL<T>
+impl<T> Builder<T>
 where
     T: serde::Serialize
         + serde::de::DeserializeOwned
@@ -94,141 +71,236 @@ where
         + std::marker::Sync
         + 'static,
 {
-    pub fn new(instance: Arc<AsyncRwLock<Instance<T>>>) -> Self {
-        Self {
-            instance,
-            periods: Arc::new(RwLock::new(HashMap::default())),
-        }
+    /// Set a name for the database.
+    /// Does not affect anything.
+    fn _name(mut self, name: String) -> Self {
+        self._name = name;
+        self
     }
 
-    pub fn add_entry(
-        &mut self,
-        id: String,
-        timestamp: u64,
-    ) -> Result<(), Error> {
-        let actual_hour = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+    /// Set the threshold, in kilobytes, for flushing the memory table.
+    ///
+    /// When set to 0, writing to the memtable is disabled.
+    ///
+    /// Specifying a non-zero value enables more controlled write management,
+    /// reducing the risk of overwriting disk data. However, it comes with
+    /// a potential increase in RAM consumption (up to the specified value),
+    /// and there's a risk of data loss in the event of a program crash,
+    /// especially if crash management hasn't been implemented.
+    pub fn memtable_flush_size(mut self, threshold_in_kb: usize) -> Self {
+        self.memtable_flush_size_in_kb = threshold_in_kb;
+        self
+    }
 
-        if actual_hour >= timestamp {
-            // Remove expired entry.
-            let instance = Arc::clone(&self.instance);
-            tokio::task::spawn(async move {
-                if let Some(sender) = &instance.read().await.sender {
-                    if let Ok(Some(data)) =
-                        instance.read().await.get(id.clone())
-                    {
-                        let _ = sender.send(data).await;
-                    }
-                }
-                let _ = instance.write().await.delete(&id);
-            });
-        } else if actual_hour / SECONDS_IN_HOUR == timestamp / SECONDS_IN_HOUR {
-            let instance = Arc::clone(&self.instance);
-            tokio::task::spawn(async move {
-                sleep(Duration::from_secs(timestamp - actual_hour));
+    /// Set [`tokio::sync::mpsc::Sender`] to notify on expired values.
+    ///
+    /// By providing a sender, you enable the database to communicate expiration
+    /// events to other parts of your program or system asynchronously.
+    pub fn mpsc_sender(mut self, sender: Sender<T>) -> Self {
+        self.sender = Some(sender);
+        self
+    }
 
-                if let Some(sender) = &instance.read().await.sender {
-                    if let Ok(Some(data)) =
-                        instance.read().await.get(id.clone())
-                    {
-                        let _ = sender.send(data).await;
-                    }
-                }
-                let _ = instance.write().await.delete(&id);
-            });
-        } else {
-            self.periods
-                .write()
-                .map_err(|_| {
-                    Error::new(
-                        squid_error::ErrorType::InputOutput(
-                            squid_error::IoError::WritingError,
-                        ),
-                        None,
-                        Some("cannot get `periods`".to_string()),
+    /// Enables time-to-live (TTL) on entries.
+    pub fn with_ttl(mut self) -> Self {
+        self.ttl = true;
+        self
+    }
+
+    /// Build [`squid_db::manager::Instance`].
+    ///
+    /// # Examples
+    /// ```rust
+    /// use serde::{Deserialize, Serialize};
+    /// use squid_db::{Builder, Instance, Attributes};
+    /// use std::sync::Arc;
+    /// use tokio::sync::RwLock;
+    ///
+    /// #[derive(Serialize, Deserialize, Default)]
+    /// struct Entity {
+    ///     data: String,
+    ///     love_him: bool,
+    /// }
+    ///
+    /// impl Attributes for Entity {}
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let instance: Arc<tokio::sync::RwLock<Instance<Entity>>> =
+    ///         Builder::default().build().await.unwrap();
+    ///     //... then you can do enything with the instance.
+    /// }
+    /// ```
+    pub async fn build(
+        self,
+    ) -> Result<Arc<RwLock<manager::Instance<T>>>, Error> {
+        let (entires, index, file, mut file_name) = load::<T>()?;
+
+        let file = file.unwrap_or_else(|| {
+            file_name = uuid::Uuid::new_v4().to_string();
+            let path = PathBuf::from(SOURCE_DIRECTORY)
+                .join(format!("{}.{}", file_name, FILE_EXT));
+
+            OpenOptions::new()
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(&path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "failed to create new file on {}",
+                        path.to_string_lossy()
                     )
-                })?
-                .entry(timestamp / SECONDS_IN_HOUR)
-                .and_modify(|e| {
-                    e.push(Entry {
-                        id: id.clone(),
-                        exact_expiration: timestamp,
-                    })
                 })
-                .or_insert(vec![Entry {
-                    id,
-                    exact_expiration: timestamp,
-                }]);
-        }
+        });
 
-        Ok(())
-    }
+        let instance = Arc::new(RwLock::new(manager::Instance {
+            file,
+            file_name,
+            index,
+            ttl: None,
+            entries: entires.0,
+            memtable: Vec::new(),
+            memtable_flush_size_in_kb: self.memtable_flush_size_in_kb,
+            sender: self.sender,
+            phantom: PhantomData,
+        }));
 
-    #[allow(unreachable_code)]
-    fn spawn_timers(&self) {
-        let periods = Arc::clone(&self.periods);
-        let instance = Arc::clone(&self.instance);
+        if self.ttl {
+            let ttl = Arc::new(RwLock::new(TTL::new(Arc::clone(&instance))));
 
-        tokio::task::spawn(async move {
-            loop {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-
-                // Sleep until next hour.
-                sleep(Duration::from_secs(
-                    SECONDS_IN_HOUR - (now % SECONDS_IN_HOUR),
-                ));
-
-                if let Some(timers) = periods
-                    .read()
-                    .map_err(|_| {
-                        Error::new(
-                            squid_error::ErrorType::InputOutput(
-                                squid_error::IoError::WritingError,
-                            ),
-                            None,
-                            Some("cannot get `periods`".to_string()),
-                        )
-                    })?
-                    .get(&(now / SECONDS_IN_HOUR))
-                {
-                    for timer in timers {
-                        let entry = timer.clone();
-                        let instance = Arc::clone(&instance);
-
-                        tokio::task::spawn(async move {
-                            sleep(Duration::from_secs(
-                                entry.exact_expiration
-                                    - SystemTime::now()
-                                        .duration_since(UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs(),
-                            ));
-
-                            if let Some(sender) = &instance.read().await.sender
-                            {
-                                if let Ok(Some(data)) =
-                                    instance.read().await.get(entry.id.clone())
-                                {
-                                    let _ = sender.send(data).await;
-                                }
-                            }
-                            let _ = instance.write().await.delete(&entry.id);
-                        });
-                    }
+            for entry in &instance.read().await.entries {
+                if let Some(expire) = entry.ttl() {
+                    let _ = ttl.write().await.add_entry(entry.id(), expire);
                 }
             }
 
-            Ok::<(), Error>(())
-        });
+            ttl.read().await.init();
+        }
+
+        Ok(instance)
+    }
+}
+
+/// Loads a specific data file rather than the whole set.
+#[inline(always)]
+fn load_file<T>(mut name: String) -> Result<World<T>, Error>
+where
+    T: serde::Serialize
+        + serde::de::DeserializeOwned
+        + Attributes
+        + std::marker::Send
+        + std::marker::Sync
+        + 'static,
+{
+    if !name.ends_with(FILE_EXT) {
+        name = format!("{}.{}", name, FILE_EXT);
     }
 
-    // Starts the periodic check and recent counters.
-    pub fn init(&self) {
-        self.spawn_timers();
+    let file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .open(Path::new(SOURCE_DIRECTORY).join(name))
+        .map_err(|error| {
+            Error::new(
+                ErrorType::Unspecified,
+                Some(Box::new(error)),
+                Some("while opening file".to_string()),
+            )
+        })?;
+
+    let reader = BufReader::new(&file);
+    let mut world: World<T> = World(Vec::new());
+
+    for line in reader.lines() {
+        let line_data: T = bincode::deserialize(
+            line.map_err(|error| {
+                Error::new(
+                    ErrorType::InputOutput(IoError::ReadingError),
+                    Some(Box::new(error)),
+                    Some("cannot read line before deserialization".to_string()),
+                )
+            })?
+            .as_bytes(),
+        )
+        .map_err(|error| {
+            Error::new(
+                ErrorType::InputOutput(IoError::DeserializationError),
+                Some(Box::new(error)),
+                Some("cannot serialize to read file".to_string()),
+            )
+        })?;
+
+        world.0.push(line_data);
     }
+
+    Ok(world)
+}
+
+/// Reads data from each saved file in the source directory,
+/// generates an index, and returns any unfinished files
+/// (those with fewer than the specified maximum entries).
+#[inline(always)]
+fn load<T>(
+) -> Result<(World<T>, BTreeMap<String, String>, Option<File>, String), Error>
+where
+    T: serde::Serialize
+        + serde::de::DeserializeOwned
+        + Attributes
+        + std::marker::Send
+        + std::marker::Sync
+        + 'static,
+{
+    let mut world: World<T> = World(Vec::new());
+    let mut index: BTreeMap<String, String> = BTreeMap::new();
+    let mut uncomplete_file: Option<File> = None;
+    let mut file_name = String::default();
+
+    let _ = create_dir(SOURCE_DIRECTORY);
+
+    for entry in read_dir(SOURCE_DIRECTORY)
+        .map_err(|error| {
+            Error::new(
+                ErrorType::InputOutput(IoError::WritingError),
+                Some(Box::new(error)),
+                Some("cannot read data dir".to_string()),
+            )
+        })?
+        .collect::<Result<Vec<_>, io::Error>>()
+        .map_err(|error| {
+            Error::new(
+                ErrorType::InputOutput(IoError::ReadingError),
+                Some(Box::new(error)),
+                Some("cannot convert into vector".to_string()),
+            )
+        })?
+    {
+        let filename = entry.file_name().into_string().unwrap_or_default();
+        let mut data: Vec<T> = load_file(filename.to_string())?.0;
+
+        for line in &data {
+            index.insert(line.id(), filename.clone());
+        }
+
+        if data.len() < MAX_ENTRIES_PER_FILE {
+            uncomplete_file = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(&Path::new(SOURCE_DIRECTORY).join(filename))
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorType::Unspecified,
+                            Some(Box::new(error)),
+                            Some("while opening file to load it".to_string()),
+                        )
+                    })?,
+            );
+            file_name = entry.file_name().into_string().unwrap_or_default();
+        }
+
+        world.0.append(&mut data);
+    }
+
+    Ok((world, index, uncomplete_file, file_name))
 }
