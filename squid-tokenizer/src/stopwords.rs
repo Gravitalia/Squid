@@ -11,7 +11,7 @@ static STOP_WORDS: OnceLock<Vec<String>> = OnceLock::new();
 
 /// Inits `STOP_WORDS` by adding every lines from a text file
 /// to the cache.
-pub(crate) fn init(path: PathBuf) {
+pub fn init(path: PathBuf) {
     STOP_WORDS.get_or_init(|| {
         if let Ok(file) = OpenOptions::new().read(true).open(path) {
             let reader = BufReader::new(&file);
@@ -31,9 +31,9 @@ pub(crate) fn init(path: PathBuf) {
 /// Removes every stop words from a sentence.
 ///
 /// # Example
-/// ```rust
-/// use std::{fs::File, io::prelude::*};
-/// use squid_tokenizer::stopwords::remove_words_from_sentence;
+/// ```no_run,rust
+/// use std::{fs::File, io::prelude::*, path::Path};
+/// use squid_tokenizer::stopwords::{remove_words_from_sentence, init};
 ///
 /// let mut buffer: Vec<u8> = vec![];
 /// buffer.extend_from_slice(b"ich");
@@ -44,6 +44,8 @@ pub(crate) fn init(path: PathBuf) {
 ///
 /// let mut file = File::create("./stopwords.txt").unwrap();
 /// file.write_all(&buffer).unwrap();
+/// 
+/// init(Path::new("./stopwords").to_path_buf());
 ///
 /// let sentence = "ich bin Hans".to_string();
 /// assert_eq!(remove_words_from_sentence(sentence), "Hans".to_string());
