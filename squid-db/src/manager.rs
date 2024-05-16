@@ -391,4 +391,8 @@ where
 
         Ok(())
     }
+    
+    pub(super) fn ttl(&mut self, ttl: Arc<RwLock<TTL<T>>>) {
+        self.ttl = Some(ttl);
+    }
 }
