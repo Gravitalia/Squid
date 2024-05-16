@@ -1,4 +1,5 @@
-//! dd
+//! database manager.
+//! supports read, write, memtable.
 
 use crate::{
     ttl::TTL, Attributes, FILE_EXT, MAX_ENTRIES_PER_FILE, SOURCE_DIRECTORY,
