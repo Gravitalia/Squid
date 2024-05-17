@@ -4,25 +4,25 @@
 //!
 //! internal database used by Squid to store tokenized texts.
 
-/// Compresses bytes to reduce size.
 #[cfg(feature = "compress")]
 mod compress;
+mod manager;
 mod ttl;
 
-use serde::Serialize;
+pub use manager::Instance;
+
+use ttl::TTL;
+use crate::manager::World;
 use squid_error::{Error, ErrorType, IoError};
 use std::{
     collections::BTreeMap,
     fs::{create_dir, read_dir, File, OpenOptions},
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader},
     marker::PhantomData,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
-use tokio::sync::{mpsc::Sender, RwLock as AsyncRwLock};
-#[cfg(feature = "logging")]
-use tracing::trace;
-use ttl::TTL;
+use tokio::sync::{mpsc::Sender, RwLock};
 
 const SOURCE_DIRECTORY: &str = "./data/";
 const FILE_EXT: &str = "bin";
@@ -41,51 +41,28 @@ pub trait Attributes {
     }
 }
 
-/// Structure representing the database world.
-#[derive(Serialize, PartialEq, Debug)]
-pub struct World<T>(pub Vec<T>)
-where
+/// [`Builder`] handle database creation.
+#[derive(Default)]
+pub struct Builder<
     T: serde::Serialize
         + serde::de::DeserializeOwned
+        + Attributes
         + std::marker::Send
         + std::marker::Sync
-        + 'static;
-
-/// Structure representing one instance of the database.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct Instance<
-    T: serde::Serialize
-        + serde::de::DeserializeOwned
-        + std::marker::Send
-        + std::marker::Sync
-        + 'static
-        + Attributes,
+        + 'static,
 > {
-    /// File writing new entries.
-    /// There is no need to re-open the file each time.
-    file: File,
-    /// Opened file UUID.
-    file_name: String,
-    /// Index to link an ID to a file.
-    /// This allows the file to be targeted for modification or deletion.
-    index: BTreeMap<String, String>,
-    /// TTL manager.
-    ttl: Option<Arc<RwLock<TTL<T>>>>,
-    /// Data saved on disk.
-    pub entries: Vec<T>,
-    /// Caching of data to be written to avoid overload and bottlenecks.
-    memtable: Vec<T>,
+    /// Database name.
+    _name: String,
     /// After how many kb the data is written hard to the disk.
-    /// Set to 0 to deactivate the memory table.
     memtable_flush_size_in_kb: usize,
-    /// MPSC consumer used to know expired sentences.
-    /// Created by yourself using [`tokio::sync::mpsc`].
+    /// Async MPSC sender.
     sender: Option<Sender<T>>,
+    /// Is TTL manager is enabled.
+    ttl: bool,
     phantom: PhantomData<T>,
 }
 
-impl<T> Instance<T>
+impl<T> Builder<T>
 where
     T: serde::Serialize
         + serde::de::DeserializeOwned
@@ -94,24 +71,69 @@ where
         + std::marker::Sync
         + 'static,
 {
-    /// Create a new database instance.
+    /// Set a name for the database.
+    /// Does not affect anything.
+    fn _name(mut self, name: String) -> Self {
+        self._name = name;
+        self
+    }
+
+    /// Set the threshold, in kilobytes, for flushing the memory table.
+    ///
+    /// When set to 0, writing to the memtable is disabled.
+    ///
+    /// Specifying a non-zero value enables more controlled write management,
+    /// reducing the risk of overwriting disk data. However, it comes with
+    /// a potential increase in RAM consumption (up to the specified value),
+    /// and there's a risk of data loss in the event of a program crash,
+    /// especially if crash management hasn't been implemented.
+    pub fn memtable_flush_size(mut self, threshold_in_kb: usize) -> Self {
+        self.memtable_flush_size_in_kb = threshold_in_kb;
+        self
+    }
+
+    /// Set [`tokio::sync::mpsc::Sender`] to notify on expired values.
+    ///
+    /// By providing a sender, you enable the database to communicate expiration
+    /// events to other parts of your program or system asynchronously.
+    pub fn mpsc_sender(mut self, sender: Sender<T>) -> Self {
+        self.sender = Some(sender);
+        self
+    }
+
+    /// Enables time-to-live (TTL) on entries.
+    pub fn with_ttl(mut self) -> Self {
+        self.ttl = true;
+        self
+    }
+
+    /// Build [`squid_db::manager::Instance`].
     ///
     /// # Examples
     /// ```rust
     /// use serde::{Deserialize, Serialize};
-    /// use squid_db::{Instance, Attributes};
+    /// use squid_db::{Builder, Instance, Attributes};
+    /// use std::sync::Arc;
+    /// use tokio::sync::RwLock;
     ///
-    /// #[derive(Serialize, Deserialize)]
+    /// #[derive(Serialize, Deserialize, Default)]
     /// struct Entity {
     ///     data: String,
+    ///     love_him: bool,
     /// }
     ///
     /// impl Attributes for Entity {}
     ///
-    /// let instance: Instance<Entity> = Instance::new(0).unwrap();
-    /// //... then you can do enything with the instance.
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let instance: Arc<tokio::sync::RwLock<Instance<Entity>>> =
+    ///         Builder::default().build().await.unwrap();
+    ///     //... then you can do enything with the instance.
+    /// }
     /// ```
-    pub fn new(memtable_flush_size_in_kb: usize) -> Result<Self, Error> {
+    pub async fn build(
+        self,
+    ) -> Result<Arc<RwLock<manager::Instance<T>>>, Error> {
         let (entires, index, file, mut file_name) = load::<T>()?;
 
         let file = file.unwrap_or_else(|| {
@@ -132,403 +154,32 @@ where
                 })
         });
 
-        Ok(Self {
+        let instance = Arc::new(RwLock::new(manager::Instance {
             file,
             file_name,
             index,
             ttl: None,
             entries: entires.0,
             memtable: Vec::new(),
-            memtable_flush_size_in_kb,
-            sender: None,
+            memtable_flush_size_in_kb: self.memtable_flush_size_in_kb,
+            sender: self.sender,
             phantom: PhantomData,
-        })
-    }
+        }));
 
-    /// Set [`tokio::sync::mpsc::Sender`] to send expire
-    /// event in channel.
-    pub fn sender(&mut self, sender: Sender<T>) {
-        self.sender = Some(sender);
-    }
+        if self.ttl {
+            let ttl = Arc::new(RwLock::new(TTL::new(Arc::clone(&instance))));
 
-    /// Start TTL manager.
-    /// This can results in higher memory consumption.
-    ///
-    /// # Examples
-    /// ```no_run,rust
-    /// use serde::{Deserialize, Serialize};
-    /// use squid_db::{Instance, Attributes};
-    ///
-    /// #[derive(Serialize, Deserialize)]
-    /// struct Entity {
-    ///     id: String,
-    ///     data: String,
-    ///     love: bool,
-    ///     lifetime: u64,
-    /// }
-    ///
-    /// impl Attributes for Entity {
-    ///     fn id(&self) -> String {
-    ///         self.id.clone()
-    ///     }
-    ///
-    ///     fn ttl(&self) -> Option<u64> {
-    ///         Some(self.lifetime)
-    ///     }
-    /// }
-    ///
-    /// let mut instance: Instance<Entity> = Instance::new(0).unwrap();
-    ///
-    /// instance.set(Entity {
-    ///     id: "U1".to_string(),
-    ///     data: "I do not know if my french teaher like me...".to_string(),
-    ///     love: false,
-    ///     lifetime: 0, // permanent sentence.
-    /// });
-    ///
-    /// instance.set(Entity {
-    ///     id: "U2".to_string(),
-    ///     data: "It starts with A! My love?".to_string(),
-    ///     love: true,
-    ///     lifetime: 500, // because love only lasts 500 seconds.
-    /// });
-    ///
-    /// instance.start_ttl();
-    /// ```
-    pub async fn start_ttl(self) -> Arc<AsyncRwLock<Instance<T>>> {
-        let this = Arc::new(AsyncRwLock::new(self));
-        let ttl_manager =
-            Arc::new(RwLock::new(ttl::TTL::new(Arc::clone(&this))));
-
-        let (ttl, instance) = (Arc::clone(&ttl_manager), Arc::clone(&this));
-        tokio::task::spawn(async move {
-            for entry in &instance.write().await.entries {
+            for entry in &instance.read().await.entries {
                 if let Some(expire) = entry.ttl() {
-                    let _ = ttl.write().unwrap().add_entry(entry.id(), expire);
+                    let _ = ttl.write().await.add_entry(entry.id(), expire);
                 }
             }
-        });
 
-        ttl_manager.write().unwrap().init();
-        this.write().await.ttl = Some(ttl_manager);
-
-        this
-    }
-
-    /// d
-    pub fn get(&self, id: String) -> Result<Option<T>, Error> {
-        if let Some(file_name) = self.index.get(&id) {
-            let data = load_file::<T>(file_name.to_string())?.0;
-
-            Ok(data.into_iter().find(|entry| entry.id() == id))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Add a new entry to the database.
-    ///
-    /// # Examples
-    /// ```rust
-    /// use serde::{Deserialize, Serialize};
-    /// use squid_db::{Instance, Attributes};
-    ///
-    /// #[derive(Serialize, Deserialize)]
-    /// struct Entity {
-    ///     data: String,
-    ///     love_him: bool,
-    /// }
-    ///
-    /// impl Attributes for Entity {}
-    ///
-    /// let mut instance: Instance<Entity> = Instance::new(0).unwrap();
-    ///
-    /// instance.set(Entity {
-    ///     data: "I really like my classmate, Julien".to_string(),
-    ///     love_him: false,
-    /// });
-    ///
-    /// instance.set(Entity {
-    ///     data: "But I do not speak to Julien".to_string(),
-    ///     love_him: true,
-    /// });
-    /// ```
-    pub fn set(&mut self, data: T) -> Result<(), Error> {
-        if let Some(timestamp) = data.ttl() {
-            self.ttl
-                .as_ref()
-                .and_then(|ttl| ttl.write().ok())
-                .map(|mut ttl| ttl.add_entry(data.id(), timestamp))
-                .transpose()?;
+            ttl.read().await.init();
+            instance.write().await.ttl(ttl);
         }
 
-        #[cfg(feature = "logging")]
-        trace!(id = data.id(), "Added new entry.");
-
-        match self.memtable_flush_size_in_kb {
-            0 => {
-                #[cfg(not(feature = "compress"))]
-                let encoded = bincode::serialize(&data).map_err(|error| {
-                    Error::new(
-                        ErrorType::InputOutput(IoError::DeserializationError),
-                        Some(error),
-                        Some(
-                            "during `bincode` serialization to set new entry"
-                                .to_string(),
-                        ),
-                    )
-                })?;
-
-                self.index.insert(data.id(), self.file_name.clone());
-                self.save(&encoded)?
-            },
-            max_kb_size => {
-                self.memtable.push(data);
-
-                if max_kb_size
-                    < (self.memtable.len() * std::mem::size_of::<T>()) / 1000
-                {
-                    self.flush().map_err(|error| {
-                        Error::new(
-                            ErrorType::Unspecified,
-                            Some(Box::new(error)),
-                            Some("while flushing database".to_string()),
-                        )
-                    })?
-                }
-            },
-        }
-
-        Ok(())
-    }
-
-    /// Deletes a record from the data based on its unique identifier.
-    pub fn delete(&mut self, id: &str) -> Result<(), Error> {
-        if let Some(file_name) = self.index.get(id) {
-            let file =
-                File::open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
-                    .map_err(|error| {
-                        Error::new(
-                            ErrorType::InputOutput(IoError::ReadingError),
-                            Some(Box::new(error)),
-                            Some(
-                                "cannot open file to delete entry".to_string(),
-                            ),
-                        )
-                    })?;
-            let reader = BufReader::new(file);
-
-            let lines: Vec<Vec<u8>> = reader
-                .lines()
-                .map_while(Result::ok)
-                .map(|entry| entry.as_bytes().to_vec())
-                .collect();
-
-            let index_to_delete = lines.iter().position(|line| {
-                if let Ok(data) = bincode::deserialize::<T>(line) {
-                    return data.id() == id;
-                }
-                false
-            });
-
-            if let Some(index) = index_to_delete {
-                let mut file = OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(PathBuf::from(SOURCE_DIRECTORY).join(file_name))
-                    .map_err(|error| {
-                        Error::new(
-                            ErrorType::Unspecified,
-                            Some(Box::new(error)),
-                            Some(
-                                "during file opening to delete row".to_string(),
-                            ),
-                        )
-                    })?;
-
-                lines.iter().enumerate().for_each(|(i, line)| {
-                    if i != index {
-                        writeln!(file, "{}", String::from_utf8_lossy(line))
-                            .unwrap_or_default();
-                    }
-                });
-
-                #[cfg(feature = "logging")]
-                trace!(id = id, file = file_name, "Entry deleted.",);
-            }
-        } else {
-            self.memtable.retain(|entry| entry.id() != id);
-        }
-
-        Ok(())
-    }
-
-    /// Append one data to the file.
-    #[inline(always)]
-    #[allow(unused)]
-    fn save(&mut self, buf: &[u8]) -> Result<(), Error> {
-        let mut line_count = io::BufReader::new(&self.file).lines().count();
-        let mut buffer: Vec<u8> = vec![];
-
-        buffer.extend_from_slice(buf);
-        buffer.extend_from_slice(b"\n");
-
-        self.file.write_all(&buffer).map_err(|error| {
-            Error::new(
-                ErrorType::Unspecified,
-                Some(Box::new(error)),
-                Some("saving context".to_string()),
-            )
-        })?;
-
-        if line_count + 1 >= MAX_ENTRIES_PER_FILE {
-            self.file_name = uuid::Uuid::new_v4().to_string();
-            let path = PathBuf::from(SOURCE_DIRECTORY)
-                .join(format!("{}.{}", self.file_name, FILE_EXT));
-
-            self.file = OpenOptions::new()
-                .read(true)
-                .append(true)
-                .create(true)
-                .open(&path)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "failed to create new file on {}",
-                        path.to_string_lossy()
-                    )
-                });
-        }
-
-        Ok(())
-    }
-
-    /// Saves the data contained in the buffer to the hard disk.
-    pub fn flush(&mut self) -> Result<(), Error> {
-        let line_count = io::BufReader::new(&self.file).lines().count();
-
-        if line_count + self.memtable.len() > MAX_ENTRIES_PER_FILE {
-            // If we just write all, number of lines will exceed maximum allowed.
-            // So, we will split into two different files.
-            let mut buffer: Vec<u8> = Vec::with_capacity(self.memtable.len());
-
-            let mut file_limit = MAX_ENTRIES_PER_FILE - line_count;
-            for n in 0..file_limit {
-                let data = &self.memtable[n];
-
-                buffer.extend_from_slice(&bincode::serialize(&data).map_err(
-                    |error| {
-                        Error::new(
-                            ErrorType::InputOutput(IoError::SerializationError),
-                            Some(Box::new(error)),
-                            Some(
-                                "cannot serialize to flush database"
-                                    .to_string(),
-                            ),
-                        )
-                    },
-                )?);
-                buffer.extend_from_slice(b"\n");
-
-                // Insert new hard entry into index.
-                self.index.insert(data.id(), self.file_name.clone());
-            }
-
-            self.file.write_all(&buffer).map_err(|error| {
-                Error::new(
-                    ErrorType::Unspecified,
-                    Some(Box::new(error)),
-                    Some("flush writing".to_string()),
-                )
-            })?;
-            self.file.flush().map_err(|error| {
-                Error::new(
-                    ErrorType::Unspecified,
-                    Some(Box::new(error)),
-                    Some("re-flush on flush over flush".to_string()),
-                )
-            })?;
-
-            self.file_name = uuid::Uuid::new_v4().to_string();
-            let path = PathBuf::from(SOURCE_DIRECTORY)
-                .join(format!("{}.{}", self.file_name, FILE_EXT));
-
-            self.file = OpenOptions::new()
-                .read(true)
-                .append(true)
-                .create(true)
-                .open(&path)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "failed to create new file on {}",
-                        path.to_string_lossy()
-                    )
-                });
-
-            for _ in
-                1..(line_count + self.memtable.len() - MAX_ENTRIES_PER_FILE)
-            {
-                file_limit += 1;
-                let data = &self.memtable[file_limit];
-
-                buffer.extend_from_slice(&bincode::serialize(&data).map_err(
-                    |error| {
-                        Error::new(
-                            ErrorType::InputOutput(IoError::SerializationError),
-                            Some(Box::new(error)),
-                            Some(
-                                "cannot serialize to flush database"
-                                    .to_string(),
-                            ),
-                        )
-                    },
-                )?);
-                buffer.extend_from_slice(b"\n");
-
-                // Insert new hard entry into index.
-                self.index.insert(data.id(), self.file_name.clone());
-            }
-
-            self.file.write_all(&buffer).map_err(|error| {
-                Error::new(
-                    ErrorType::Unspecified,
-                    Some(Box::new(error)),
-                    Some("flush writing".to_string()),
-                )
-            })?;
-        } else {
-            let mut buffer: Vec<u8> = Vec::with_capacity(self.memtable.len());
-
-            for data in &self.memtable {
-                buffer.extend_from_slice(&bincode::serialize(&data).map_err(
-                    |error| {
-                        Error::new(
-                            ErrorType::InputOutput(IoError::SerializationError),
-                            Some(Box::new(error)),
-                            Some(
-                                "cannot serialize to flush database"
-                                    .to_string(),
-                            ),
-                        )
-                    },
-                )?);
-                buffer.extend_from_slice(b"\n");
-
-                // Insert new hard entry into index.
-                self.index.insert(data.id(), self.file_name.clone());
-            }
-
-            self.file.write_all(&buffer).map_err(|error| {
-                Error::new(
-                    ErrorType::Unspecified,
-                    Some(Box::new(error)),
-                    Some("again flush writing".to_string()),
-                )
-            })?;
-
-            self.memtable.clear();
-        }
-
-        Ok(())
+        Ok(instance)
     }
 }
 
@@ -536,8 +187,8 @@ where
 #[inline(always)]
 fn load_file<T>(mut name: String) -> Result<World<T>, Error>
 where
-    T: serde::de::DeserializeOwned
-        + serde::Serialize
+    T: serde::Serialize
+        + serde::de::DeserializeOwned
         + Attributes
         + std::marker::Send
         + std::marker::Sync
@@ -587,13 +238,15 @@ where
     Ok(world)
 }
 
-/// Loads data from the file.
+/// Reads data from each saved file in the source directory,
+/// generates an index, and returns any unfinished files
+/// (those with fewer than the specified maximum entries).
 #[inline(always)]
 fn load<T>(
 ) -> Result<(World<T>, BTreeMap<String, String>, Option<File>, String), Error>
 where
-    T: serde::de::DeserializeOwned
-        + serde::Serialize
+    T: serde::Serialize
+        + serde::de::DeserializeOwned
         + Attributes
         + std::marker::Send
         + std::marker::Sync

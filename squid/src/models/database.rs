@@ -7,7 +7,7 @@ lazy_static! {
 }
 
 /// Text representation in the database.
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Default, Debug, Clone)]
 pub struct Entity {
     /// Unique identifier of the text.
     pub id: String,

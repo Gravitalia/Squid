@@ -118,17 +118,21 @@ async fn main() {
 
     let config = helpers::config::read();
 
-    // Start database.
-    let mut db_instance: squid_db::Instance<Entity> =
-        squid_db::Instance::new(FLUSHTABLE_FLUSH_SIZE_KB).unwrap();
-    info!(
-        "Loaded instance with {} entities.",
-        db_instance.entries.len()
-    );
-
     // Set producer channel to receive expired sentences.
     let (tx, mut rx) = mpsc::channel::<Entity>(2305843009213693951);
-    db_instance.sender(tx);
+
+    // Start database.
+    let instance = squid_db::Builder::default()
+        .memtable_flush_size(FLUSHTABLE_FLUSH_SIZE_KB)
+        .mpsc_sender(tx)
+        .with_ttl()
+        .build()
+        .await
+        .unwrap();
+    info!(
+        "Loaded instance with {} entities.",
+        instance.read().await.entries.len()
+    );
 
     // Chose algorithm.
     let algo = Arc::new(RwLock::new(match config.service.algorithm {
@@ -148,7 +152,7 @@ async fn main() {
     });
 
     // Add each words to algorithm.
-    for data in &db_instance.entries {
+    for data in &instance.read().await.entries {
         for str in data.post_processing_text.split_whitespace() {
             if !config.service.exclude.contains(&str.to_string()) {
                 match config.service.message_type {
@@ -167,9 +171,6 @@ async fn main() {
             }
         }
     }
-
-    // Init TTL.
-    let instance = db_instance.start_ttl().await;
 
     /*let ctrlc_instance = Arc::clone(&instance);
     ctrlc::set_handler(move || {

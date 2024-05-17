@@ -5,6 +5,53 @@
 //! After a periodic check, usually every hour, if there are recordings in the
 //! current hour, a task is launched to delete the expired recording to the
 //! nearest second.
+//!
+//! # Examples
+//! ```no_run,rust
+//! use serde::{Deserialize, Serialize};
+//! use squid_db::{Builder, Attributes};
+//!
+//! #[derive(Serialize, Deserialize, Default)]
+//! struct Entity {
+//!     id: String,
+//!     data: String,
+//!     love: bool,
+//!     lifetime: u64,
+//! }
+//!
+//! impl Attributes for Entity {
+//!     fn id(&self) -> String {
+//!         self.id.clone()
+//!     }
+//!
+//!     fn ttl(&self) -> Option<u64> {
+//!         Some(self.lifetime)
+//!     }
+//! }
+//! 
+//! #[tokio::main]
+//! async fn main() {
+//!     let instance = Builder::default()
+//!         .with_ttl()
+//!         .build()
+//!         .await
+//!         .unwrap();
+//!
+//!     instance.write().await.set(Entity {
+//!         id: "U1".to_string(),
+//!         data: "I do not know if my french teacher like me...".to_string(),
+//!         love: false,
+//!         lifetime: 0, // permanent sentence.
+//!     }).await;
+//!
+//!     instance.write().await.set(Entity {
+//!         id: "U2".to_string(),
+//!         data: "It starts with A! My love?".to_string(),
+//!         love: true,
+//!         lifetime: 500, // because love only lasts 500 seconds.
+//!     }).await;
+//! }
+//! ```
 
 use crate::{Attributes, Instance};
 use squid_error::Error;
