@@ -1,25 +1,32 @@
-use lz4::{Decoder, EncoderBuilder};
-use std::io::{self, Result};
+//! Compression manager.
 
-/// Compresses data using `lz4`.
-pub fn compress(mut source: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = EncoderBuilder::new()
-        .level(3)
-        .favor_dec_speed(true)
-        .build(Vec::new())?;
-    io::copy(&mut source, &mut encoder)?;
+use flate2::{
+    write::{ZlibDecoder, ZlibEncoder},
+    Compression,
+};
+use std::io::{Error, Write};
 
-    let (buffer, _) = encoder.finish();
-
-    Ok(buffer)
+enum Algorithm {
+    Zlib,
 }
 
-/// Decompress data using `lz4`.
-pub fn decompress(buf: &[u8]) -> Result<Vec<u8>> {
-    //let input_file: File = File::open(SOURCE_FILE)?;
-    let mut decoder = Decoder::new(buf)?;
-    let mut output = Vec::new();
-    io::copy(&mut decoder, &mut output)?;
+pub(crate) fn compress(buffer: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
 
-    Ok(output)
+    encoder.write_all(buffer)?;
+
+    let result = encoder.finish()?;
+
+    Ok(result)
+}
+
+pub(crate) fn decompress(buffer: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut writer = Vec::new();
+    let mut decoder = ZlibDecoder::new(writer);
+
+    decoder.write_all(&buffer)?;
+
+    writer = decoder.finish()?;
+
+    Ok(writer)
 }
