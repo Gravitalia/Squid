@@ -109,7 +109,7 @@ where
     ///         data: "I really like my classmate, Julien".to_string(),
     ///         love_him: false,
     ///     });
-    /// 
+    ///
     ///     instance.write().await.set(Entity {
     ///         data: "But I do not speak to Julien".to_string(),
     ///         love_him: true,
@@ -128,7 +128,6 @@ where
 
         match self.memtable_flush_size_in_kb {
             0 => {
-                #[cfg(not(feature = "compress"))]
                 let encoded = bincode::serialize(&data).map_err(|error| {
                     Error::new(
                         ErrorType::InputOutput(IoError::DeserializationError),
@@ -231,8 +230,44 @@ where
         let mut line_count = io::BufReader::new(&self.file).lines().count();
         let mut buffer: Vec<u8> = vec![];
 
+        #[cfg(feature = "compress")]
+        {
+            use std::io::Read;
+
+            self.file.read_to_end(&mut buffer).map_err(|error| {
+                Error::new(
+                    ErrorType::InputOutput(IoError::ReadingError),
+                    Some(Box::new(error)),
+                    Some("cannot read file".to_string()),
+                )
+            })?;
+
+            buffer = crate::compress::decompress(&buffer).map_err(|error| {
+                Error::new(
+                    ErrorType::Database(
+                        squid_error::DatabaseError::FailedCompression,
+                    ),
+                    Some(Box::new(error)),
+                    Some("cannot decompress file".to_string()),
+                )
+            })?;
+        }
+
         buffer.extend_from_slice(buf);
         buffer.extend_from_slice(b"\n");
+
+        #[cfg(feature = "compress")]
+        {
+            buffer = crate::compress::compress(&buffer).map_err(|error| {
+                Error::new(
+                    ErrorType::Database(
+                        squid_error::DatabaseError::FailedCompression,
+                    ),
+                    Some(Box::new(error)),
+                    Some("cannot compress whole file".to_string()),
+                )
+            })?;
+        }
 
         self.file.write_all(&buffer).map_err(|error| {
             Error::new(
@@ -247,7 +282,8 @@ where
             let path = PathBuf::from(SOURCE_DIRECTORY)
                 .join(format!("{}.{}", self.file_name, FILE_EXT));
 
-            self.file = OpenOptions::new()
+            #[cfg(not(feature = "compress"))]
+            let file = OpenOptions::new()
                 .read(true)
                 .append(true)
                 .create(true)
@@ -258,6 +294,21 @@ where
                         path.to_string_lossy()
                     )
                 });
+
+            #[cfg(feature = "compress")]
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "failed to create new file on {}",
+                        path.to_string_lossy()
+                    )
+                });
+
+            self.file = file;
         }
 
         Ok(())
@@ -391,7 +442,7 @@ where
 
         Ok(())
     }
-    
+
     pub(super) fn ttl(&mut self, ttl: Arc<RwLock<TTL<T>>>) {
         self.ttl = Some(ttl);
     }
