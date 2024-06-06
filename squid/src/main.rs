@@ -47,7 +47,7 @@ impl Squid for SuperSquid {
             .await
             .iter()
             .map(|(word, occurence)| Word {
-                word: word.to_string(),
+                word: word.to_string().replace("%20", " "),
                 occurence: (*occurence).try_into().unwrap_or_default(),
             })
             .collect::<Vec<_>>(),
