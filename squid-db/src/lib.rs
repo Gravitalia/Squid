@@ -11,21 +11,24 @@ mod ttl;
 
 pub use manager::Instance;
 
-use ttl::TTL;
 use crate::manager::World;
 use squid_error::{Error, ErrorType, IoError};
 use std::{
     collections::BTreeMap,
     fs::{create_dir, read_dir, File, OpenOptions},
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead},
     marker::PhantomData,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::sync::{mpsc::Sender, RwLock};
+use ttl::TTL;
 
 const SOURCE_DIRECTORY: &str = "./data/";
+#[cfg(not(feature = "compress"))]
 const FILE_EXT: &str = "bin";
+#[cfg(feature = "compress")]
+const FILE_EXT: &str = "zz";
 const MAX_ENTRIES_PER_FILE: usize = 10_000;
 
 /// Attributes required for TTL management.
@@ -141,17 +144,35 @@ where
             let path = PathBuf::from(SOURCE_DIRECTORY)
                 .join(format!("{}.{}", file_name, FILE_EXT));
 
-            OpenOptions::new()
-                .read(true)
-                .append(true)
-                .create(true)
-                .open(&path)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "failed to create new file on {}",
-                        path.to_string_lossy()
-                    )
-                })
+            #[cfg(not(feature = "compress"))]
+            {
+                OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .create(true)
+                    .open(&path)
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "failed to create new file on {}",
+                            path.to_string_lossy()
+                        )
+                    })
+            }
+
+            #[cfg(feature = "compress")]
+            {
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .open(&path)
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "failed to create new file on {}",
+                            path.to_string_lossy()
+                        )
+                    })
+            }
         });
 
         let instance = Arc::new(RwLock::new(manager::Instance {
@@ -210,8 +231,35 @@ where
             )
         })?;
 
-    let reader = BufReader::new(&file);
     let mut world: World<T> = World(Vec::new());
+
+    #[cfg(feature = "compress")]
+    let reader = {
+        use std::io::Read;
+
+        let mut buffer: Vec<u8> = vec![];
+
+        file.read_to_end(&mut buffer).map_err(|error| {
+            Error::new(
+                ErrorType::InputOutput(IoError::ReadingError),
+                Some(Box::new(error)),
+                Some("cannot read file".to_string()),
+            )
+        })?;
+
+        crate::compress::decompress(&buffer).map_err(|error| {
+            Error::new(
+                ErrorType::Database(
+                    squid_error::DatabaseError::FailedCompression,
+                ),
+                Some(Box::new(error)),
+                Some("cannot decompress file".to_string()),
+            )
+        })?
+    };
+
+    #[cfg(not(feature = "compress"))]
+    let reader = std::io::BufReader::new(&file);
 
     for line in reader.lines() {
         let line_data: T = bincode::deserialize(

@@ -8,13 +8,15 @@ edition.workspace = true
 
 [dependencies]
 bincode = "1"
-lz4 = { version = "1.24", optional = true }
 serde = { version = "1", features = ["derive"] }
 tokio = "1"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 tracing = { workspace = true, optional = true }
 squid-error = { path = "../squid-error" }
 
+flate2 = { version = "1", optional = true }
+crc32fast = { version = "1.4", optional = true }
+
 [features]
-compress = ["lz4"]
+compress = ["flate2", "crc32fast"]
 logging = ["tracing"]
