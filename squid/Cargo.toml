@@ -15,7 +15,7 @@ name = "set"
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tonic = { version = "0.11", features = ["default"] }
-prost = "0.12"
+prost = "0.13"
 
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
