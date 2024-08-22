@@ -1,9 +1,0 @@
-version: 2
-updates:
-  - package-ecosystem: "cargo"
-    applies-to: security-updates
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    reviewers:
-      - "realhinome"
