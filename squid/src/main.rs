@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tokio::signal;
 use tokio::sync::{mpsc, RwLock};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{error, info, Level};
@@ -31,7 +32,7 @@ struct SuperSquid {
     instance: Arc<RwLock<squid_db::Instance<models::database::Entity>>>,
 }
 
-const FLUSHTABLE_FLUSH_SIZE_KB: usize = 0; // instantly save it.
+const FLUSHTABLE_FLUSH_SIZE_KB: usize = 100; // wait 100kb on memtable before save it on disk.
 
 #[tonic::async_trait]
 impl Squid for SuperSquid {
@@ -54,10 +55,7 @@ impl Squid for SuperSquid {
         }))
     }
 
-    async fn add(
-        &self,
-        request: Request<AddRequest>,
-    ) -> Result<Response<Void>, Status> {
+    async fn add(&self, request: Request<AddRequest>) -> Result<Response<Void>, Status> {
         let data = request.into_inner();
 
         helpers::database::set(
@@ -67,15 +65,10 @@ impl Squid for SuperSquid {
             models::database::Entity {
                 id: uuid::Uuid::new_v4().to_string(),
                 original_text: None,
-                post_processing_text: tokenize(&data.sentence).map_err(
-                    |error| {
-                        error!(
-                            "Failed to tokenize {:?}: {}",
-                            data.sentence, error
-                        );
-                        Status::invalid_argument("failed to tokenize sentence")
-                    },
-                )?,
+                post_processing_text: tokenize(&data.sentence).map_err(|error| {
+                    error!("Failed to tokenize {:?}: {}", data.sentence, error);
+                    Status::invalid_argument("failed to tokenize sentence")
+                })?,
                 lang: "fr".to_string(),
                 meta: if data.lifetime == 0 {
                     String::default()
@@ -136,9 +129,7 @@ async fn main() {
 
     // Chose algorithm.
     let algo = Arc::new(RwLock::new(match config.service.algorithm {
-        models::config::Algorithm::Hashmap => {
-            squid_algorithm::hashtable::MapAlgorithm::default()
-        },
+        models::config::Algorithm::Hashmap => squid_algorithm::hashtable::MapAlgorithm::default(),
     }));
 
     // Init MPSC consumer.
@@ -160,36 +151,33 @@ async fn main() {
                         if str.starts_with('#') {
                             algo.write().await.set(str)
                         }
-                    },
+                    }
                     models::config::MessageType::Word => {
                         if !str.starts_with('#') {
                             algo.write().await.set(str)
                         }
-                    },
+                    }
                     _ => algo.write().await.set(str),
                 }
             }
         }
     }
 
-    /*let ctrlc_instance = Arc::clone(&instance);
-    ctrlc::set_handler(move || {
-        let ctrlc_instance = Arc::clone(&ctrlc_instance);
+    // Waiting for CTRL+C to save memtable.
+    let ctrlc_instance = Arc::clone(&instance);
+    tokio::spawn(async move {
+        signal::ctrl_c()
+            .await
+            .expect("failed to listen for ctrl+c event");
         if FLUSHTABLE_FLUSH_SIZE_KB > 0 {
-            info!("Flush memtable...");
-            tokio::task::spawn(async move {
-                if let Err(err) = ctrlc_instance.write().await.flush() {
-                    error!(
-                        "Some data haven't been flushed from memtable: {}",
-                        err
-                    );
-                }
-            });
+            info!("Flushing memtable...");
+            if let Err(err) = ctrlc_instance.write().await.flush() {
+                error!("Some data haven't been flushed from memtable: {}", err);
+            }
         }
-
+        info!("Closing Squid server...");
         std::process::exit(0);
-    })
-    .expect("Failed to set Ctrl+C handler");*/
+    });
 
     let addr = format!("0.0.0.0:{}", config.port.unwrap_or(50051))
         .parse()
